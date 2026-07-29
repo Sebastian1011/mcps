@@ -28,8 +28,15 @@ CN_COLUMN_MAP: dict[str, str | None] = {
     "基金代码": "symbol",
     "品种": "symbol",
     "交易品种": "symbol",
+    # already-English identity columns from akshare's own instrument-table
+    # functions (stock_info_a_code_name / index_stock_info), normalized to
+    # the same symbol/name pair every other market uses so
+    # list_instruments() has one consistent column shape.
+    "code": "symbol",
+    "index_code": "symbol",
     "名称": "name",
     "基金简称": "name",
+    "display_name": "name",
     "交易所": "exchange",
     "市场": "exchange",
     # price
@@ -63,6 +70,11 @@ CN_COLUMN_MAP: dict[str, str | None] = {
     "换手率": "turnover_rate",
     "量比": "volume_ratio",
     "持仓量": "open_interest",
+    # global_futures_hist_em's raw output uses the shorter "持仓" (not
+    # "持仓量") for the same open-interest concept -- previously unmapped,
+    # so get_history_bars(market='global_futures') was silently emitting
+    # the raw Chinese column name instead of 'open_interest'.
+    "持仓": "open_interest",
     "买盘": "bid_volume",
     "卖盘": "ask_volume",
     "买入": "bid",
@@ -93,6 +105,10 @@ CN_COLUMN_MAP: dict[str, str | None] = {
     "申购状态": "subscription_status",
     "赎回状态": "redemption_status",
     "手续费": "fee",
+    # fund instrument listing (fund_name_em, used by list_instruments for open_fund)
+    "拼音缩写": "pinyin",
+    "拼音全称": "pinyin_full",
+    "基金类型": "fund_type",
     # internal / row-index artifacts, always dropped
     "序号": None,
     "index": None,
@@ -262,3 +278,56 @@ def xq_to_record(df: pd.DataFrame) -> tuple[list[str], list[Any], list[str]]:
         row.append(to_scalar(value))
 
     return columns, row, notes
+
+
+# cn_futures contract-spec lookups (list_instruments(..., include_spec=True))
+# -- verified against each exchange's futures_contract_info_* source in
+# akshare 1.18.80. Each exchange uses a completely different column
+# vocabulary, so unlike the rest of this module these need per-exchange
+# `overrides` passed to normalize_frame() rather than one shared global
+# mapping: e.g. GFEX/CFFEX's raw "品种" here means "variety name", which
+# would otherwise collide with CN_COLUMN_MAP's "品种" -> "symbol" (used by
+# cn_futures' own realtime table) and silently drop the real contract-code
+# column under normalize_frame()'s first-occurrence-wins dedup. A value of
+# None drops that column (same convention as CN_COLUMN_MAP). See
+# akshare_mcp.instruments for how these are used and what each exchange
+# does/doesn't publish.
+FUTURES_SPEC_OVERRIDES: dict[str, dict[str, str | None]] = {
+    "shfe": {
+        "合约代码": "symbol", "上市日": "listing_date", "到期日": "expiry_date",
+        "开始交割日": "delivery_start_date", "最后交割日": "last_delivery_day",
+        "挂牌基准价": "listing_base_price", "交易日": "trade_date", "更新时间": "updated_at",
+    },
+    "ine": {
+        "合约代码": "symbol", "上市日": "listing_date", "到期日": "expiry_date",
+        "开始交割日": "delivery_start_date", "最后交割日": "last_delivery_day",
+        "挂牌基准价": "listing_base_price", "交易日": "trade_date",
+    },
+    "dce": {
+        "品种名称": "variety", "合约": "symbol", "交易单位": "contract_unit",
+        "最小变动价位": "tick_size", "开始交易日": "listing_date",
+        "最后交易日": "last_trading_day", "最后交割日": "last_delivery_day",
+    },
+    "gfex": {
+        "品种": "variety", "合约代码": "symbol", "交易单位": "contract_unit",
+        "最小变动单位": "tick_size", "开始交易日": "listing_date",
+        "最后交易日": "last_trading_day", "最后交割日": "last_delivery_day",
+    },
+    "cffex": {
+        "合约代码": "symbol", "品种": "variety", "合约月份": "contract_month",
+        "上市日": "listing_date", "最后交易日": "last_trading_day",
+        "涨停板幅度": "limit_up_pct", "跌停板幅度": "limit_down_pct",
+        "涨停板价位": "limit_up_price", "跌停板价位": "limit_down_price",
+        "持仓限额": "position_limit", "查询交易日": "trade_date",
+    },
+    "czce": {
+        "合约代码": "symbol", "产品名称": "variety", "最小变动价位": "tick_size",
+        "交易单位": "contract_unit", "第一交易日": "listing_date",
+        "最后交割日": "last_delivery_day", "涨跌停板": "price_limit_pct",
+        # CZCE's "last trading day" column name embeds a temporary caveat
+        # about a pending holiday-schedule announcement baked in by akshare
+        # itself (e.g. "最后交易日待国家公布2025年节假日安排后进行调整") -- not a
+        # stable key, so akshare_mcp.instruments locates it by a "最后交易日"
+        # prefix match at call time instead of listing it here.
+    },
+}

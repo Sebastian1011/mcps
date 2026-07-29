@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from akshare_mcp.server import get_history_bars, get_realtime_quotes
+from akshare_mcp.registry import MARKETS
+from akshare_mcp.server import describe_market, get_history_bars, get_realtime_quotes, list_instruments
 
 pytestmark = pytest.mark.live
 
@@ -69,3 +70,36 @@ async def test_crypto_has_no_history() -> None:
 
     with pytest.raises(ToolError):
         await get_history_bars(market="crypto", symbol="BTC")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("market", sorted(MARKETS))
+async def test_list_instruments_returns_at_least_one_row_per_market(market: str) -> None:
+    result = await list_instruments(market=market)
+    assert result["total"] > 0, f"list_instruments(market={market!r}) returned nothing"
+    assert result["columns"]
+    assert len(result["rows"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_realtime_columns_match_the_declared_schema() -> None:
+    # schema drift detection: schemas.py's realtime_fields for cn_stock were
+    # derived from akshare's source (see tests/test_schemas.py for the
+    # offline half of this check); this confirms the *live* response
+    # actually matches, catching an upstream akshare release that changes
+    # stock_zh_a_spot_em's real columns without this server noticing.
+    live = await get_realtime_quotes(market="cn_stock", limit=5)
+    declared = await describe_market(market="cn_stock")
+    declared_names = {f["name"] for f in declared["realtime_fields"]}
+    assert set(live["columns"]) == declared_names
+
+
+@pytest.mark.asyncio
+async def test_cn_futures_include_spec_populates_tick_size() -> None:
+    result = await list_instruments(market="cn_futures", query="螺纹钢", include_spec=True)
+    assert result["total"] > 0
+    assert "tick_size" in result["columns"]
+    tick_idx = result["columns"].index("tick_size")
+    assert any(row[tick_idx] is not None for row in result["rows"]), (
+        "expected at least one RB contract to have a non-null tick_size from SHFE's contract-info endpoint"
+    )

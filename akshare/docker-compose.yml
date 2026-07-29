@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8890:8000"
     volumes:
       # Named volume so the disk cache (7-day history TTL by default)
       # survives container recreation/upgrades. To use a bind mount

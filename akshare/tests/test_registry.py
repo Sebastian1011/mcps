@@ -59,6 +59,20 @@ CALLS: list[tuple[str, list[str]]] = [
     ("spot_hist_sge", ["symbol"]),
     ("fund_open_fund_daily_em", []),
     ("fund_open_fund_info_em", ["symbol", "indicator", "period"]),
+    # instruments.py -- list_instruments' dedicated instrument tables and
+    # cn_futures contract-spec lookups (see that module's docstring for why
+    # each of these was chosen over an available alternative).
+    ("stock_info_a_code_name", []),
+    ("index_stock_info", []),
+    ("spot_symbol_table_sge", []),
+    ("fund_name_em", []),
+    ("tool_trade_date_hist_sina", []),
+    ("futures_contract_info_shfe", ["date"]),
+    ("futures_contract_info_ine", ["date"]),
+    ("futures_contract_info_czce", ["date"]),
+    ("futures_contract_info_cffex", ["date"]),
+    ("futures_contract_info_dce", []),
+    ("futures_contract_info_gfex", []),
 ]
 
 
