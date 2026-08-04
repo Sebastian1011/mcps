@@ -67,6 +67,71 @@ case "$(uname -m)" in
     *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
+# Determine which desktop user owns the CLI installations (handles sudo)
+target_uid="${SUDO_UID:-$(id -u)}"
+target_user=$(getent passwd "$target_uid" | cut -d: -f1)
+target_home=$(getent passwd "$target_uid" | cut -d: -f6)
+
+# Run a command as the target desktop user (handles the sudo case)
+run_as_target() {
+    if [ "$(id -u)" -eq 0 ] && [ "$target_uid" -ne 0 ]; then
+        runuser -u "$target_user" -- "$@"
+    else
+        "$@"
+    fi
+}
+
+target_command_path() {
+    local command_name="$1"
+    local command_path
+
+    command_path=$(run_as_target sh -c 'command -v "$1"' sh "$command_name" 2>/dev/null || true)
+    if [ -n "$command_path" ]; then
+        echo "$command_path"
+    elif [ -x "$target_home/.local/bin/$command_name" ]; then
+        echo "$target_home/.local/bin/$command_name"
+    fi
+}
+
+update_cli() {
+    local command_name="$1"
+    local npm_package="$2"
+    local command_path npm_path npm_prefix
+
+    command_path=$(target_command_path "$command_name")
+    if [ -z "$command_path" ]; then
+        echo "⏭️  $command_name is not installed; skipping"
+        return
+    fi
+
+    if { [ "$command_name" = "claude" ] || [ "$command_name" = "codex" ]; } &&
+       [ "$(dirname "$command_path")" = "$target_home/.local/bin" ]; then
+        echo "⬆️  Updating $command_name with '$command_name update'"
+        run_as_target "$command_path" update
+        return
+    fi
+
+    npm_path=$(target_command_path npm)
+    if [ -n "$npm_path" ]; then
+        npm_prefix=$(run_as_target "$npm_path" prefix --global 2>/dev/null || true)
+    fi
+
+    if [ -n "$npm_prefix" ] &&
+       [ "$command_path" = "$npm_prefix/bin/$command_name" ] &&
+       run_as_target "$npm_path" list --global --depth=0 "$npm_package" >/dev/null 2>&1; then
+        echo "⬆️  Updating $command_name with npm"
+        run_as_target "$npm_path" update --global "$npm_package"
+    else
+        echo "⚠️  Cannot determine how $command_name was installed; skipping" >&2
+    fi
+}
+
+echo "Updating AI CLIs..."
+update_cli claude @anthropic-ai/claude-code
+update_cli codex @openai/codex
+update_cli gemini @google/gemini-cli
+echo ""
+
 # Fetch release metadata
 release_json=$(download_file "$API_URL")
 
@@ -135,20 +200,6 @@ if [ "$(id -u)" -ne 0 ]; then
         exit 1
     fi
 fi
-
-# Determine which desktop user cc-switch should be restarted as (handles sudo)
-target_uid="${SUDO_UID:-$(id -u)}"
-target_user=$(getent passwd "$target_uid" | cut -d: -f1)
-target_home=$(getent passwd "$target_uid" | cut -d: -f6)
-
-# Run a command as the target desktop user (handles the sudo case)
-run_as_target() {
-    if [ "$(id -u)" -eq 0 ] && [ "$target_uid" -ne 0 ]; then
-        runuser -u "$target_user" -- "$@"
-    else
-        "$@"
-    fi
-}
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
