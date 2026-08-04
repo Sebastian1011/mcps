@@ -5,10 +5,16 @@ set -e
 REPO="farion1231/cc-switch"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 FORCE=false
+RESTART=true
 
-if [ "$1" = "--force" ]; then
-    FORCE=true
-fi
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --force) FORCE=true ;;
+        --no-restart) RESTART=false ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+    shift
+done
 
 # Check for required dependencies
 DOWNLOADER=""
@@ -130,6 +136,20 @@ if [ "$(id -u)" -ne 0 ]; then
     fi
 fi
 
+# Determine which desktop user cc-switch should be restarted as (handles sudo)
+target_uid="${SUDO_UID:-$(id -u)}"
+target_user=$(getent passwd "$target_uid" | cut -d: -f1)
+target_home=$(getent passwd "$target_uid" | cut -d: -f6)
+
+# Run a command as the target desktop user (handles the sudo case)
+run_as_target() {
+    if [ "$(id -u)" -eq 0 ] && [ "$target_uid" -ne 0 ]; then
+        runuser -u "$target_user" -- "$@"
+    else
+        "$@"
+    fi
+}
+
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
@@ -149,6 +169,24 @@ if [ "$actual" != "$digest" ]; then
     exit 1
 fi
 
+# Snapshot the running instance (if any) before installing, so we can restart it
+# afterwards. Must happen before install/kill, since /proc/<pid> disappears once
+# the process exits.
+running_pid=""
+launch_env=()
+if [ "$RESTART" = true ]; then
+    running_pid=$(pgrep -u "$target_uid" -x cc-switch | head -n1 || true)
+    if [ -n "$running_pid" ]; then
+        while IFS= read -r -d '' kv; do
+            case "$kv" in
+                DISPLAY=*|WAYLAND_DISPLAY=*|XDG_RUNTIME_DIR=*|DBUS_SESSION_BUS_ADDRESS=*|XAUTHORITY=*|XDG_SESSION_TYPE=*|HOME=*)
+                    launch_env+=("$kv")
+                    ;;
+            esac
+        done < "/proc/$running_pid/environ" 2>/dev/null || true
+    fi
+fi
+
 # Install (prefer apt-get so dependencies are resolved)
 if command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get install -y "$deb_path"
@@ -159,3 +197,65 @@ fi
 echo ""
 echo "✅ Installed CC Switch $tag"
 echo ""
+
+# Restart cc-switch if it was running before the install (tauri-plugin-single-instance
+# means we must wait for the old process to fully exit before launching the new binary)
+if [ -n "$running_pid" ]; then
+    kill -TERM "$running_pid" 2>/dev/null || true
+    waited=0
+    while kill -0 "$running_pid" 2>/dev/null && [ "$waited" -lt 10000 ]; do
+        sleep 0.2
+        waited=$((waited + 200))
+    done
+    if kill -0 "$running_pid" 2>/dev/null; then
+        kill -KILL "$running_pid" 2>/dev/null || true
+        sleep 2
+    fi
+
+    run_as_target setsid env -u DESKTOP_STARTUP_ID -u XDG_ACTIVATION_TOKEN "${launch_env[@]}" /usr/bin/cc-switch >/dev/null 2>&1 </dev/null &
+    disown
+
+    sleep 1
+    new_pid=$(pgrep -u "$target_uid" -x cc-switch | head -n1 || true)
+    if [ -n "$new_pid" ]; then
+        echo "🔄 Restarted cc-switch (was PID $running_pid, now PID $new_pid)"
+
+        # cc-switch defaults to a hidden main window on fresh launch (silentStartup).
+        # Launching it again hands off to the running instance via tauri-plugin-single-instance,
+        # which shows + focuses the main window. Wait for its DBus name so the second launch
+        # doesn't race the first and become its own primary instance.
+        if command -v gdbus >/dev/null 2>&1; then
+            waited=0
+            while [ "$waited" -lt 15000 ]; do
+                if run_as_target env "${launch_env[@]}" gdbus call --session \
+                      --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+                      --method org.freedesktop.DBus.NameHasOwner \
+                      com.ccswitch.desktop.SingleInstance 2>/dev/null | grep -q true; then
+                    break
+                fi
+                sleep 0.3
+                waited=$((waited + 300))
+            done
+        else
+            sleep 3
+        fi
+
+        run_as_target setsid env -u DESKTOP_STARTUP_ID -u XDG_ACTIVATION_TOKEN "${launch_env[@]}" /usr/bin/cc-switch >/dev/null 2>&1 </dev/null &
+        disown
+        echo "🪟 Requested main window to show"
+    else
+        echo "⚠️  Could not confirm cc-switch restarted (no GUI session? launch it manually)" >&2
+    fi
+    echo ""
+fi
+
+# Fix an autostart entry left pointing at a deleted inode by a previous in-place upgrade
+autostart_desktop="$target_home/.config/autostart/CC Switch.desktop"
+if [ -f "$autostart_desktop" ] && grep -q '^Exec=.*(deleted)' "$autostart_desktop" 2>/dev/null; then
+    sed -i 's|^Exec=.*|Exec=/usr/bin/cc-switch|' "$autostart_desktop"
+    if [ "$(id -u)" -eq 0 ] && [ "$target_uid" -ne 0 ]; then
+        chown "$target_uid:$target_uid" "$autostart_desktop"
+    fi
+    echo "🛠️  Fixed stale autostart entry: $autostart_desktop"
+    echo ""
+fi
