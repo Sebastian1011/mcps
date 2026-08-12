@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""agent-privexec-root - root-side privileged broker for AI coding agents.
+
+Invoked exclusively through:
+
+    pkexec --disable-internal-agent /usr/local/libexec/agent-privexec-root -- ...
+
+Everything reaching this program is untrusted: the calling user, the client
+wrapper, the agent that produced the argv. The only trusted inputs are the
+root-owned policy file and PKEXEC_UID (set by pkexec itself).
+
+Invocation:
+
+    agent-privexec-root [--dry-run] [--policy PATH]
+                        [--request-id ID] [--caller-agent NAME] [--caller-cwd DIR]
+                        -- OPERATION [ARGS...]
+
+Operations:
+
+    exec PROGRAM [ARGS...]
+    systemctl VERB [UNIT]
+    chmod MODE PATH
+    chown OWNER PATH
+    install-file MODE OWNER SRC DEST
+
+Exit codes:
+    0    operation executed (or dry-run allowed)
+    3    denied by policy / malformed request
+    4    internal error (policy unreadable, etc.)
+    else exit code of the executed program
+"""
+
+from __future__ import annotations
+
+import grp
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+import syslog
+import time
+import tomllib
+import uuid
+
+DEFAULT_POLICY = "/etc/agent-privexec/policy.toml"
+SYSLOG_IDENT = "agent-privexec"
+
+EXIT_DENIED = 3
+EXIT_INTERNAL = 4
+
+KNOWN_AGENTS = ("codex", "claude", "cli", "unknown")
+
+OWNER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?(:[a-z_][a-z0-9_-]{0,31}\$?)?$")
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+
+
+class Denied(Exception):
+    """Request rejected by policy or input validation."""
+
+
+class Internal(Exception):
+    """Local failure unrelated to the request itself."""
+
+
+# --------------------------------------------------------------------------
+# logging
+# --------------------------------------------------------------------------
+
+
+def audit(record: dict) -> None:
+    """Emit one structured audit record to journald (authpriv)."""
+    try:
+        syslog.openlog(ident=SYSLOG_IDENT, facility=syslog.LOG_AUTHPRIV)
+        priority = syslog.LOG_NOTICE if record.get("decision") == "allowed" else syslog.LOG_WARNING
+        syslog.syslog(priority, json.dumps(record, ensure_ascii=False, sort_keys=True))
+    except Exception:  # logging must never break or leak into the result
+        pass
+
+
+# --------------------------------------------------------------------------
+# input validation
+# --------------------------------------------------------------------------
+
+
+def check_token(value: str, limits: dict, what: str) -> str:
+    if len(value) > limits["max_arg_length"]:
+        raise Denied(f"{what} exceeds max_arg_length ({limits['max_arg_length']})")
+    if "\x00" in value:
+        raise Denied(f"{what} contains a NUL byte")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise Denied(f"{what} is not valid UTF-8")
+    for ch in value:
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
+            raise Denied(f"{what} contains a control character")
+    return value
+
+
+def check_request(argv: list[str], limits: dict) -> None:
+    if not argv:
+        raise Denied("empty request")
+    if len(argv) > limits["max_args"]:
+        raise Denied(f"request has too many arguments ({len(argv)} > {limits['max_args']})")
+    total = sum(len(a) for a in argv)
+    if total > limits["max_total_length"]:
+        raise Denied(f"request too long ({total} > {limits['max_total_length']} bytes)")
+    for i, a in enumerate(argv):
+        check_token(a, limits, f"argument {i}")
+
+
+# --------------------------------------------------------------------------
+# policy helpers
+# --------------------------------------------------------------------------
+
+
+def load_policy(path: str) -> dict:
+    try:
+        with open(path, "rb") as fh:
+            policy = tomllib.load(fh)
+    except FileNotFoundError:
+        raise Internal(f"policy file {path} not found")
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Internal(f"policy file {path} is unreadable: {exc}")
+
+    if os.geteuid() == 0:
+        # Only meaningful while privileged; unprivileged dry-runs may use a
+        # user-owned policy copy (see --policy) for testing.
+        st = os.stat(path)
+        if st.st_uid != 0:
+            raise Internal(f"policy file {path} is not owned by root")
+        if st.st_mode & 0o022:
+            raise Internal(f"policy file {path} is group- or world-writable")
+
+    policy.setdefault("limits", {})
+    policy["limits"].setdefault("max_args", 64)
+    policy["limits"].setdefault("max_arg_length", 4096)
+    policy["limits"].setdefault("max_total_length", 16384)
+    return policy
+
+
+def canonical(path: str) -> str:
+    return os.path.realpath(path)
+
+
+def check_executable(path: str) -> str:
+    """Canonicalise an executable path and require it to be root-owned."""
+    if not path.startswith("/"):
+        raise Denied(f"executable {path} is not an absolute path")
+    real = canonical(path)
+    if not os.path.isfile(real):
+        raise Denied(f"executable {real} does not exist")
+    if not os.access(real, os.X_OK):
+        raise Denied(f"executable {real} is not executable")
+    st = os.stat(real)
+    if st.st_uid != 0:
+        raise Denied(f"executable {real} is not owned by root")
+    if st.st_mode & 0o022:
+        raise Denied(f"executable {real} is group- or world-writable")
+    return real
+
+
+def check_path_allowed(path: str, policy: dict, must_exist: bool = True) -> str:
+    """Validate a filesystem path used as the target of a privileged operation."""
+    if not path.startswith("/"):
+        raise Denied(f"path {path} is not absolute")
+    if must_exist:
+        if not os.path.lexists(path):
+            raise Denied(f"path {path} does not exist")
+        real = canonical(path)
+    else:
+        parent = canonical(os.path.dirname(path) or "/")
+        if not os.path.isdir(parent):
+            raise Denied(f"destination directory {parent} does not exist")
+        real = os.path.join(parent, os.path.basename(path))
+
+    for prefix in policy.get("paths", {}).get("protected_prefixes", []):
+        if real == prefix or real.startswith(prefix.rstrip("/") + "/"):
+            raise Denied(f"path {real} is protected by privileged policy")
+    return real
+
+
+# --------------------------------------------------------------------------
+# operations -> concrete argv
+# --------------------------------------------------------------------------
+
+
+def binary(policy: dict, name: str) -> str:
+    path = policy.get("binaries", {}).get(name)
+    if not path:
+        raise Internal(f"policy does not define binaries.{name}")
+    return check_executable(path)
+
+
+def op_exec(args: list[str], policy: dict) -> list[str]:
+    if not args:
+        raise Denied("exec requires a program")
+    section = policy.get("exec", {})
+    program = check_executable(args[0])
+
+    for denied in section.get("denied", []):
+        if os.path.realpath(denied) == program:
+            raise Denied(f"executable {program} is not permitted by privileged policy")
+
+    allowed = {os.path.realpath(p) for p in section.get("allowed", [])}
+    if program not in allowed:
+        raise Denied(f"executable {program} is not permitted by privileged policy")
+
+    return [program] + args[1:]
+
+
+def op_systemctl(args: list[str], policy: dict) -> list[str]:
+    section = policy.get("systemctl", {})
+    if not args:
+        raise Denied("systemctl requires a verb")
+    verb, rest = args[0], args[1:]
+    if verb not in section.get("allowed_verbs", []):
+        raise Denied(f"systemctl verb {verb} is not permitted by privileged policy")
+
+    if verb in section.get("verbs_without_unit", []):
+        if rest:
+            raise Denied(f"systemctl {verb} does not take a unit argument")
+        return [binary(policy, "systemctl"), verb]
+
+    if len(rest) != 1:
+        raise Denied(f"systemctl {verb} requires exactly one unit argument")
+    unit = rest[0]
+    pattern = section.get("unit_pattern")
+    if pattern and not re.match(pattern, unit):
+        raise Denied(f"unit {unit} is not a permitted unit name")
+    return [binary(policy, "systemctl"), verb, "--", unit]
+
+
+def check_mode(mode: str, policy: dict) -> str:
+    section = policy.get("chmod", {})
+    pattern = section.get("mode_pattern", r"^[0-7]{3,4}$")
+    if not re.match(pattern, mode):
+        raise Denied(f"mode {mode} must be octal (e.g. 0644); symbolic modes are not permitted")
+    if len(mode) == 4 and not section.get("allow_setuid_setgid", False):
+        if int(mode[0]) & 0o6:
+            raise Denied(f"mode {mode} sets setuid/setgid bits, which are not permitted")
+    return mode
+
+
+def check_owner(owner: str) -> str:
+    if not OWNER_RE.match(owner):
+        raise Denied(f"owner {owner} is not a valid user[:group] specification")
+    user, _, group = owner.partition(":")
+    try:
+        pwd.getpwnam(user)
+    except KeyError:
+        raise Denied(f"user {user} does not exist")
+    if group:
+        try:
+            grp.getgrnam(group)
+        except KeyError:
+            raise Denied(f"group {group} does not exist")
+    return owner
+
+
+def op_chmod(args: list[str], policy: dict) -> list[str]:
+    if len(args) != 2:
+        raise Denied("chmod requires exactly: MODE PATH")
+    mode = check_mode(args[0], policy)
+    path = check_path_allowed(args[1], policy)
+    return [binary(policy, "chmod"), mode, "--", path]
+
+
+def op_chown(args: list[str], policy: dict) -> list[str]:
+    if len(args) != 2:
+        raise Denied("chown requires exactly: OWNER PATH")
+    owner = check_owner(args[0])
+    path = check_path_allowed(args[1], policy)
+    return [binary(policy, "chown"), owner, "--", path]
+
+
+def op_install_file(args: list[str], policy: dict) -> list[str]:
+    if len(args) != 4:
+        raise Denied("install-file requires exactly: MODE OWNER SRC DEST")
+    mode = check_mode(args[0], policy)
+    owner = check_owner(args[1])
+    src = args[2]
+    dest = args[3]
+
+    if not src.startswith("/"):
+        raise Denied(f"source {src} is not absolute")
+    src_real = canonical(src)
+    if not os.path.isfile(src_real):
+        raise Denied(f"source {src_real} is not a regular file")
+
+    dest_real = check_path_allowed(dest, policy, must_exist=False)
+    prefixes = policy.get("install_file", {}).get("allowed_dest_prefixes", [])
+    if not any(dest_real.startswith(p) for p in prefixes):
+        raise Denied(f"destination {dest_real} is not within a permitted install prefix")
+
+    user, _, group = owner.partition(":")
+    argv = [binary(policy, "install"), "-m", mode, "-o", user]
+    if group:
+        argv += ["-g", group]
+    argv += ["--", src_real, dest_real]
+    return argv
+
+
+OPERATIONS = {
+    "exec": op_exec,
+    "systemctl": op_systemctl,
+    "chmod": op_chmod,
+    "chown": op_chown,
+    "install-file": op_install_file,
+}
+
+
+# --------------------------------------------------------------------------
+# execution
+# --------------------------------------------------------------------------
+
+
+def clean_env() -> dict:
+    env = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME": "/root",
+        "USER": "root",
+        "LOGNAME": "root",
+        "SHELL": "/usr/sbin/nologin",
+        "LANG": "C.UTF-8",
+    }
+    term = os.environ.get("TERM", "")
+    if re.match(r"^[A-Za-z0-9._+-]{1,32}$", term):
+        env["TERM"] = term
+    return env
+
+
+def run(argv: list[str]) -> int:
+    os.umask(0o022)
+    try:
+        proc = subprocess.run(argv, env=clean_env(), cwd="/", close_fds=True)
+        return proc.returncode
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exc:
+        raise Internal(f"failed to execute {argv[0]}: {exc}")
+
+
+# --------------------------------------------------------------------------
+# argv parsing
+# --------------------------------------------------------------------------
+
+
+def parse_argv(argv: list[str]) -> tuple[dict, list[str]]:
+    opts = {
+        "dry_run": False,
+        "policy": DEFAULT_POLICY,
+        "request_id": "",
+        "caller_agent": "unknown",
+        "caller_cwd": "",
+    }
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--":
+            return opts, argv[i + 1 :]
+        if arg == "--dry-run":
+            opts["dry_run"] = True
+        elif arg == "--policy":
+            i += 1
+            if i >= len(argv):
+                raise Denied("--policy requires a value")
+            # A caller-supplied policy must never be honoured while privileged.
+            if os.geteuid() == 0:
+                raise Denied("--policy is not accepted for privileged execution")
+            opts["policy"] = argv[i]
+        elif arg in ("--request-id", "--caller-agent", "--caller-cwd"):
+            key = arg[2:].replace("-", "_")
+            i += 1
+            if i >= len(argv):
+                raise Denied(f"{arg} requires a value")
+            opts[key] = argv[i]
+        else:
+            raise Denied(f"unknown option {arg}")
+        i += 1
+    raise Denied("missing '--' separator before the operation")
+
+
+def sanitise_metadata(opts: dict) -> dict:
+    """Metadata is caller-controlled: keep it for the audit trail, never trust it."""
+    rid = opts["request_id"]
+    if not REQUEST_ID_RE.match(rid or ""):
+        rid = str(uuid.uuid4())
+    agent = opts["caller_agent"] if opts["caller_agent"] in KNOWN_AGENTS else "unknown"
+    cwd = opts["caller_cwd"]
+    if not cwd.startswith("/") or len(cwd) > 4096 or any(ord(c) < 0x20 for c in cwd):
+        cwd = ""
+    return {"request_id": rid, "agent": agent, "claimed_cwd": cwd}
+
+
+def caller_identity() -> dict:
+    """Identity of the invoking user, as reported by pkexec (not by the client)."""
+    raw = os.environ.get("PKEXEC_UID", "")
+    if raw.isdigit():
+        uid = int(raw)
+    else:
+        uid = os.getuid()
+    try:
+        user = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        user = str(uid)
+    return {"uid": uid, "user": user}
+
+
+# --------------------------------------------------------------------------
+
+
+def main() -> int:
+    started = time.monotonic()
+    record = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "decision": "denied",
+    }
+    record.update(caller_identity())
+
+    try:
+        opts, request = parse_argv(sys.argv[1:])
+        record.update(sanitise_metadata(opts))
+        policy = load_policy(opts["policy"])
+        check_request(request, policy["limits"])
+
+        operation, args = request[0], request[1:]
+        record["operation"] = operation
+        record["argv"] = args
+        handler = OPERATIONS.get(operation)
+        if handler is None:
+            raise Denied(f"unknown operation {operation}")
+
+        argv = handler(args, policy)
+        record["decision"] = "allowed"
+        record["resolved_argv"] = argv
+        record["dry_run"] = opts["dry_run"]
+
+        if opts["dry_run"]:
+            record["exit_code"] = 0
+            record["duration_ms"] = int((time.monotonic() - started) * 1000)
+            audit(record)
+            print("agent-privexec: allowed: " + " ".join(argv), file=sys.stderr)
+            return 0
+
+        audit(dict(record, phase="start"))
+        code = run(argv)
+        record["exit_code"] = code
+        record["duration_ms"] = int((time.monotonic() - started) * 1000)
+        audit(record)
+        return code
+
+    except Denied as exc:
+        record["decision"] = "denied"
+        record["reason"] = str(exc)
+        record["duration_ms"] = int((time.monotonic() - started) * 1000)
+        audit(record)
+        print(f"agent-privexec: {exc}", file=sys.stderr)
+        return EXIT_DENIED
+    except Internal as exc:
+        record["decision"] = "error"
+        record["reason"] = str(exc)
+        audit(record)
+        print(f"agent-privexec: internal error: {exc}", file=sys.stderr)
+        return EXIT_INTERNAL
+
+
+if __name__ == "__main__":
+    sys.exit(main())

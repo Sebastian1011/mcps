@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""agent-privexec - the single entry point AI coding agents may use for root.
+
+The client is deliberately thin: it normalises the request, prints a preview,
+and hands a structured argv to the root helper through pkexec. It grants
+nothing by itself - policy lives in /etc/agent-privexec/policy.toml and is
+enforced by /usr/local/libexec/agent-privexec-root.
+
+Usage:
+    agent-privexec [--dry-run] exec -- PROGRAM [ARGS...]
+    agent-privexec [--dry-run] systemctl VERB [UNIT]
+    agent-privexec [--dry-run] chmod MODE PATH
+    agent-privexec [--dry-run] chown OWNER PATH
+    agent-privexec [--dry-run] install-file [--mode MODE] [--owner OWNER] SRC DEST
+
+Exit codes:
+    0    success
+    2    usage error
+    3    denied by privileged policy
+    4    no graphical polkit authentication agent / authentication unavailable
+    5    authentication failed or dismissed by the user
+    else exit code of the executed program
+"""
+
+from __future__ import annotations
+
+import os
+import stat
+import subprocess
+import sys
+import uuid
+
+PKEXEC = "/usr/bin/pkexec"
+ROOT_HELPER = "/usr/local/libexec/agent-privexec-root"
+
+EXIT_USAGE = 2
+EXIT_NO_AGENT = 4
+EXIT_AUTH = 5
+
+USAGE = __doc__
+
+
+def die(message: str, code: int = EXIT_USAGE) -> "None":
+    print(f"agent-privexec: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def detect_agent() -> str:
+    if os.environ.get("AGENT_PRIVEXEC_AGENT") in ("codex", "claude", "cli"):
+        return os.environ["AGENT_PRIVEXEC_AGENT"]
+    if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
+        return "claude"
+    if any(k.startswith("CODEX_") for k in os.environ):
+        return "codex"
+    return "unknown"
+
+
+def require_graphical_session() -> None:
+    """Fail early and clearly when no GUI authentication is possible.
+
+    The real guarantee comes from `pkexec --disable-internal-agent`; this only
+    turns the generic polkit error into an actionable message. There is no TTY
+    fallback by design.
+    """
+    if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"):
+        return
+    die(
+        "Privileged operation requires an active graphical Polkit authentication agent.\n"
+        "  No WAYLAND_DISPLAY/DISPLAY in this session - run the agent from a desktop\n"
+        "  session. Do not fall back to sudo, sudo -S or pkttyagent.",
+        EXIT_NO_AGENT,
+    )
+
+
+def root_is_remapped(uid_map: str) -> bool:
+    """Return whether a Linux user namespace maps namespace root elsewhere."""
+    entries = []
+    for line in uid_map.splitlines():
+        try:
+            inside, outside, length = (int(value) for value in line.split())
+        except ValueError:
+            continue
+        entries.append((inside, outside, length))
+        if inside <= 0 < inside + length:
+            return outside - inside != 0
+    return bool(entries)
+
+
+def require_working_pkexec() -> None:
+    """Reject environments where pkexec cannot safely gain host root."""
+    try:
+        info = os.stat(PKEXEC)
+    except OSError as exc:
+        die(f"cannot inspect {PKEXEC}: {exc}", EXIT_NO_AGENT)
+
+    if info.st_uid == 0 and info.st_mode & stat.S_ISUID:
+        return
+
+    try:
+        with open("/proc/self/uid_map", encoding="ascii") as uid_map_file:
+            remapped = root_is_remapped(uid_map_file.read())
+    except OSError:
+        remapped = False
+
+    if remapped:
+        die(
+            "the current execution sandbox/user namespace cannot use setuid pkexec.\n"
+            "  Re-run this exact agent-privexec command outside the agent sandbox with\n"
+            "  user approval; do not disable the sandbox for the whole session.",
+            EXIT_NO_AGENT,
+        )
+
+    die(
+        f"{PKEXEC} must be owned by root and have its setuid bit; repair the\n"
+        "  host's pkexec package before using agent-privexec.",
+        EXIT_NO_AGENT,
+    )
+
+
+def absolute(path: str) -> str:
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def build_request(argv: list[str]) -> list[str]:
+    """Translate the user-facing CLI into the root helper's structured request."""
+    op = argv[0]
+    rest = argv[1:]
+
+    if op == "exec":
+        if rest and rest[0] == "--":
+            rest = rest[1:]
+        if not rest:
+            die("exec requires a program: agent-privexec exec -- /usr/bin/apt update")
+        if not rest[0].startswith("/"):
+            die(f"exec requires an absolute program path, got {rest[0]!r}")
+        return ["exec", *rest]
+
+    if op == "systemctl":
+        if not 1 <= len(rest) <= 2:
+            die("usage: agent-privexec systemctl VERB [UNIT]")
+        return ["systemctl", *rest]
+
+    if op == "chmod":
+        if len(rest) != 2:
+            die("usage: agent-privexec chmod MODE PATH")
+        return ["chmod", rest[0], absolute(rest[1])]
+
+    if op == "chown":
+        if len(rest) != 2:
+            die("usage: agent-privexec chown OWNER PATH")
+        return ["chown", rest[0], absolute(rest[1])]
+
+    if op == "install-file":
+        mode, owner, positional = "0644", "root:root", []
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--mode":
+                i += 1
+                if i >= len(rest):
+                    die("--mode requires a value")
+                mode = rest[i]
+            elif rest[i] == "--owner":
+                i += 1
+                if i >= len(rest):
+                    die("--owner requires a value")
+                owner = rest[i]
+            elif rest[i] == "--":
+                pass
+            else:
+                positional.append(rest[i])
+            i += 1
+        if len(positional) != 2:
+            die("usage: agent-privexec install-file [--mode MODE] [--owner OWNER] SRC DEST")
+        src, dest = positional
+        if not os.path.isfile(absolute(src)):
+            die(f"source file {src} does not exist")
+        return ["install-file", mode, owner, absolute(src), absolute(dest)]
+
+    die(f"unknown operation {op!r}\n\n{USAGE}")
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    dry_run = False
+    while argv and argv[0] in ("--dry-run", "-h", "--help"):
+        if argv[0] == "--dry-run":
+            dry_run = True
+            argv = argv[1:]
+        else:
+            print(USAGE)
+            return 0
+    if not argv:
+        print(USAGE, file=sys.stderr)
+        return EXIT_USAGE
+
+    request = build_request(argv)
+    request_id = str(uuid.uuid4())
+
+    if not os.path.isfile(ROOT_HELPER):
+        die(f"{ROOT_HELPER} is not installed; run install.sh as root first", EXIT_USAGE)
+
+    require_working_pkexec()
+    require_graphical_session()
+
+    print(
+        f"agent-privexec: request {request_id}\n"
+        f"agent-privexec: operation {' '.join(request)}\n"
+        "agent-privexec: a desktop authentication dialog will now ask for administrator credentials",
+        file=sys.stderr,
+    )
+
+    cmd = [
+        PKEXEC,
+        "--disable-internal-agent",
+        ROOT_HELPER,
+        "--request-id",
+        request_id,
+        "--caller-agent",
+        detect_agent(),
+        "--caller-cwd",
+        os.getcwd(),
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+    cmd += ["--", *request]
+
+    try:
+        code = subprocess.run(cmd).returncode
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exc:
+        die(f"failed to run pkexec: {exc}", EXIT_NO_AGENT)
+
+    if code == 126:
+        print(
+            "agent-privexec: authentication was dismissed or failed - the privileged\n"
+            "  operation did not run. Do not retry with sudo or another mechanism.",
+            file=sys.stderr,
+        )
+        return EXIT_AUTH
+    if code == 127:
+        print(
+            "agent-privexec: pkexec could not run the root helper. Check that the polkit\n"
+            f"  action is installed and that {ROOT_HELPER} is root-owned and not writable by others.",
+            file=sys.stderr,
+        )
+        return EXIT_NO_AGENT
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

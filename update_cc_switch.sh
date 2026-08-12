@@ -7,6 +7,22 @@ API_URL="https://api.github.com/repos/$REPO/releases/latest"
 FORCE=false
 RESTART=true
 
+# Slack notification target. A bot token posts straight to $SLACK_CHANNEL; an
+# incoming webhook posts to whatever channel it was created for.
+SLACK_CHANNEL="${SLACK_CHANNEL:-C0BFQVD0MHS}"
+SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-${AGENT_SLACK_WEBHOOK_URL:-}}"
+
+# Lines collected during the run and reported to Slack when the script exits
+CLI_LINES=()
+CC_LINES=()
+ERROR_MSG=""
+
+die() {
+    ERROR_MSG="$1"
+    echo "$1" >&2
+    exit 1
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --force) FORCE=true ;;
@@ -55,6 +71,92 @@ download_file() {
     fi
 }
 
+json_escape() {
+    if [ "$HAS_JQ" = true ]; then
+        printf '%s' "$1" | jq -Rsa .
+    else
+        # Tabs become spaces and other control characters are dropped; JSON
+        # forbids them unescaped and only newlines are worth keeping here.
+        printf '"%s"' "$(printf '%s' "$1" |
+            tr '\011' ' ' |
+            tr -d '\000-\010\013-\037' |
+            sed 's/\\/\\\\/g; s/"/\\"/g' |
+            awk 'BEGIN{ORS=""} {print (NR>1 ? "\\n" : "") $0}')"
+    fi
+}
+
+post_json() {
+    local url="$1" payload="$2" auth_header="$3"
+
+    if [ "$DOWNLOADER" = "curl" ]; then
+        if [ -n "$auth_header" ]; then
+            curl -fsS -X POST -H "Content-type: application/json" -H "$auth_header" --data "$payload" "$url"
+        else
+            curl -fsS -X POST -H "Content-type: application/json" --data "$payload" "$url"
+        fi
+    else
+        if [ -n "$auth_header" ]; then
+            wget -q -O - --header="Content-type: application/json" --header="$auth_header" --post-data "$payload" "$url"
+        else
+            wget -q -O - --header="Content-type: application/json" --post-data "$payload" "$url"
+        fi
+    fi
+}
+
+notify_slack() {
+    local text="$1" payload
+
+    if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+        payload="{\"channel\":$(json_escape "$SLACK_CHANNEL"),\"text\":$(json_escape "$text")}"
+        post_json "https://slack.com/api/chat.postMessage" "$payload" "Authorization: Bearer $SLACK_BOT_TOKEN" >/dev/null
+    elif [ -n "$SLACK_WEBHOOK_URL" ]; then
+        payload="{\"text\":$(json_escape "$text")}"
+        post_json "$SLACK_WEBHOOK_URL" "$payload" "" >/dev/null
+    else
+        echo "ℹ️  Slack notification skipped (set SLACK_BOT_TOKEN or SLACK_WEBHOOK_URL)" >&2
+        return 0
+    fi
+}
+
+send_report() {
+    local exit_code="$1" text line
+
+    if [ "$exit_code" -eq 0 ]; then
+        text="*✅ cc-switch update finished* — $(hostname 2>/dev/null || uname -n)"
+    else
+        text="*❌ cc-switch update failed (exit $exit_code)* — $(hostname 2>/dev/null || uname -n)"
+    fi
+
+    text="$text"$'\n'"*AI CLIs*"
+    if [ ${#CLI_LINES[@]} -gt 0 ]; then
+        for line in "${CLI_LINES[@]}"; do text="$text"$'\n'"$line"; done
+    else
+        text="$text"$'\n'"• not reached"
+    fi
+
+    text="$text"$'\n'"*CC Switch*"
+    if [ ${#CC_LINES[@]} -gt 0 ]; then
+        for line in "${CC_LINES[@]}"; do text="$text"$'\n'"$line"; done
+    else
+        text="$text"$'\n'"• not reached"
+    fi
+
+    if [ -n "$ERROR_MSG" ]; then
+        text="$text"$'\n'"\`\`\`$ERROR_MSG\`\`\`"
+    fi
+
+    notify_slack "$text" || echo "⚠️  Failed to send the Slack notification" >&2
+}
+
+finish() {
+    local exit_code=$?
+    if [ -n "${workdir:-}" ]; then
+        rm -rf "$workdir"
+    fi
+    send_report "$exit_code"
+}
+trap finish EXIT
+
 # Detect platform (cc-switch only ships .deb packages for Linux)
 case "$(uname -s)" in
     Linux) : ;;
@@ -93,21 +195,39 @@ target_command_path() {
     fi
 }
 
+cli_version() {
+    run_as_target "$1" --version 2>/dev/null | head -n1 || true
+}
+
+record_cli() {
+    local command_name="$1" before="$2" after="$3"
+
+    if [ "$before" = "$after" ]; then
+        CLI_LINES+=("• $command_name — already up to date (${after:-unknown})")
+    else
+        CLI_LINES+=("• $command_name — ${before:-unknown} → ${after:-unknown}")
+    fi
+}
+
 update_cli() {
     local command_name="$1"
     local npm_package="$2"
-    local command_path npm_path npm_prefix
+    local command_path npm_path npm_prefix before
 
     command_path=$(target_command_path "$command_name")
     if [ -z "$command_path" ]; then
         echo "⏭️  $command_name is not installed; skipping"
+        CLI_LINES+=("• $command_name — not installed, skipped")
         return
     fi
+
+    before=$(cli_version "$command_path")
 
     if { [ "$command_name" = "claude" ] || [ "$command_name" = "codex" ]; } &&
        [ "$(dirname "$command_path")" = "$target_home/.local/bin" ]; then
         echo "⬆️  Updating $command_name with '$command_name update'"
         run_as_target "$command_path" update
+        record_cli "$command_name" "$before" "$(cli_version "$command_path")"
         return
     fi
 
@@ -121,8 +241,10 @@ update_cli() {
        run_as_target "$npm_path" list --global --depth=0 "$npm_package" >/dev/null 2>&1; then
         echo "⬆️  Updating $command_name with npm"
         run_as_target "$npm_path" update --global "$npm_package"
+        record_cli "$command_name" "$before" "$(cli_version "$command_path")"
     else
         echo "⚠️  Cannot determine how $command_name was installed; skipping" >&2
+        CLI_LINES+=("• $command_name — install method unknown, skipped")
     fi
 }
 
@@ -136,8 +258,7 @@ echo ""
 release_json=$(download_file "$API_URL")
 
 if echo "$release_json" | grep -q "API rate limit exceeded"; then
-    echo "GitHub API rate limit exceeded. Try again later, or authenticate to raise the limit." >&2
-    exit 1
+    die "GitHub API rate limit exceeded. Try again later, or authenticate to raise the limit."
 fi
 
 # Extract tag_name
@@ -152,8 +273,7 @@ fi
 
 # Reject non-version content (e.g. an HTML error page or unexpected schema)
 if [[ ! "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-    echo "Failed to get a valid release tag from the GitHub API (got unexpected content)." >&2
-    exit 1
+    die "Failed to get a valid release tag from the GitHub API (got unexpected content)."
 fi
 
 asset="CC-Switch-${tag}-Linux-${arch}.deb"
@@ -177,17 +297,20 @@ digest="${digest#sha256:}"
 
 # Validate checksum format (SHA256 = 64 hex characters)
 if [ -z "$digest" ] || [[ ! "$digest" =~ ^[a-f0-9]{64}$ ]]; then
-    echo "Asset $asset not found (or missing checksum) in the latest release of $REPO" >&2
-    exit 1
+    die "Asset $asset not found (or missing checksum) in the latest release of $REPO"
+fi
+
+# Record the installed version so the report can show the transition
+installed_version=""
+if command -v dpkg-query >/dev/null 2>&1; then
+    installed_version=$(dpkg-query -W -f='${Version}' cc-switch 2>/dev/null || true)
 fi
 
 # Skip if the installed version is already up to date
-if [ "$FORCE" = false ] && command -v dpkg-query >/dev/null 2>&1; then
-    installed_version=$(dpkg-query -W -f='${Version}' cc-switch 2>/dev/null || true)
-    if [ "$installed_version" = "${tag#v}" ]; then
-        echo "cc-switch $installed_version is already up to date."
-        exit 0
-    fi
+if [ "$FORCE" = false ] && [ "$installed_version" = "${tag#v}" ]; then
+    echo "cc-switch $installed_version is already up to date."
+    CC_LINES+=("• already up to date ($tag)")
+    exit 0
 fi
 
 # Determine how to gain root for installation
@@ -196,28 +319,24 @@ if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
     else
-        echo "This script must be run as root, or with sudo installed" >&2
-        exit 1
+        die "This script must be run as root, or with sudo installed"
     fi
 fi
 
 workdir=$(mktemp -d)
-trap 'rm -rf "$workdir"' EXIT
 
 download_url="https://github.com/$REPO/releases/download/$tag/$asset"
 deb_path="$workdir/$asset"
 
 if ! download_file "$download_url" "$deb_path"; then
-    echo "Download failed" >&2
-    exit 1
+    die "Download failed: $download_url"
 fi
 
 # Pick the right checksum tool
 actual=$(sha256sum "$deb_path" | cut -d' ' -f1)
 
 if [ "$actual" != "$digest" ]; then
-    echo "Checksum verification failed" >&2
-    exit 1
+    die "Checksum verification failed for $asset (expected $digest, got $actual)"
 fi
 
 # Snapshot the running instance (if any) before installing, so we can restart it
@@ -248,6 +367,7 @@ fi
 echo ""
 echo "✅ Installed CC Switch $tag"
 echo ""
+CC_LINES+=("• ${installed_version:-not installed} → ${tag#v} installed")
 
 # Restart cc-switch if it was running before the install (tauri-plugin-single-instance
 # means we must wait for the old process to fully exit before launching the new binary)
@@ -270,6 +390,7 @@ if [ -n "$running_pid" ]; then
     new_pid=$(pgrep -u "$target_uid" -x cc-switch | head -n1 || true)
     if [ -n "$new_pid" ]; then
         echo "🔄 Restarted cc-switch (was PID $running_pid, now PID $new_pid)"
+        CC_LINES+=("• restarted (PID $running_pid → $new_pid)")
 
         # cc-switch defaults to a hidden main window on fresh launch (silentStartup).
         # Launching it again hands off to the running instance via tauri-plugin-single-instance,
@@ -296,6 +417,7 @@ if [ -n "$running_pid" ]; then
         echo "🪟 Requested main window to show"
     else
         echo "⚠️  Could not confirm cc-switch restarted (no GUI session? launch it manually)" >&2
+        CC_LINES+=("• ⚠️ could not confirm restart (was PID $running_pid)")
     fi
     echo ""
 fi
@@ -309,4 +431,5 @@ if [ -f "$autostart_desktop" ] && grep -q '^Exec=.*(deleted)' "$autostart_deskto
     fi
     echo "🛠️  Fixed stale autostart entry: $autostart_desktop"
     echo ""
+    CC_LINES+=("• fixed stale autostart entry")
 fi

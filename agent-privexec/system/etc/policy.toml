@@ -1,0 +1,131 @@
+# agent-privexec privileged policy
+#
+# Installed at /etc/agent-privexec/policy.toml, owned by root:root, mode 0644.
+# Only root may edit this file. It is the authoritative allowlist for every
+# privileged operation performed by /usr/local/libexec/agent-privexec-root.
+
+version = 1
+
+[limits]
+# Maximum number of argv elements accepted for one request (operation included).
+max_args = 64
+# Maximum length of a single argv element.
+max_arg_length = 4096
+# Maximum length of the whole request (sum of argv element lengths).
+max_total_length = 16384
+
+# Absolute paths of the helper binaries used by the structured operations.
+# Adjust per distribution.
+[binaries]
+systemctl = "/usr/bin/systemctl"
+chmod = "/usr/bin/chmod"
+chown = "/usr/bin/chown"
+install = "/usr/bin/install"
+
+[exec]
+# `agent-privexec exec -- <program> [args...]` may only run these programs.
+# Paths are canonicalised (realpath) on both sides before comparison.
+allowed = [
+  "/usr/bin/apt",
+  "/usr/bin/apt-get",
+  "/usr/bin/apt-mark",
+  "/usr/bin/dpkg",
+  "/usr/bin/systemctl",
+  "/usr/bin/journalctl",
+  "/usr/bin/mount",
+  "/usr/bin/umount",
+  "/usr/sbin/ip",
+  "/usr/sbin/ethtool",
+  "/usr/sbin/sysctl",
+  "/usr/bin/chown",
+  "/usr/bin/chmod",
+  "/usr/bin/install",
+  "/usr/bin/id",
+]
+
+# Explicit denylist, applied before the allowlist. Defence in depth: these must
+# never become privileged targets even if someone adds them to `allowed`.
+denied = [
+  "/usr/bin/bash",
+  "/usr/bin/sh",
+  "/usr/bin/dash",
+  "/usr/bin/zsh",
+  "/usr/bin/fish",
+  "/usr/bin/env",
+  "/usr/bin/perl",
+  "/usr/bin/python3",
+  "/usr/bin/ruby",
+  "/usr/bin/awk",
+  "/usr/bin/gawk",
+  "/usr/bin/find",
+  "/usr/bin/xargs",
+  "/usr/bin/sudo",
+  "/usr/bin/pkexec",
+  "/usr/bin/su",
+  "/usr/bin/visudo",
+  "/usr/bin/tee",
+  "/usr/bin/dd",
+  "/usr/bin/vim",
+  "/usr/bin/nano",
+]
+
+[systemctl]
+allowed_verbs = [
+  "start",
+  "stop",
+  "restart",
+  "reload",
+  "try-restart",
+  "reload-or-restart",
+  "enable",
+  "disable",
+  "mask",
+  "unmask",
+  "status",
+  "is-active",
+  "is-enabled",
+  "daemon-reload",
+  "daemon-reexec",
+]
+# Verbs that take no unit argument.
+verbs_without_unit = ["daemon-reload", "daemon-reexec"]
+unit_pattern = '^[A-Za-z0-9@._:-]+\.(service|socket|timer|target|path|mount|slice)$'
+
+[chmod]
+# Octal only; symbolic modes and recursion are not accepted.
+mode_pattern = '^[0-7]{3,4}$'
+# Reject setuid/setgid bits (leading octal digit 2, 4 or 6).
+allow_setuid_setgid = false
+
+[install_file]
+# `install-file` may only write below these prefixes.
+allowed_dest_prefixes = [
+  "/etc/",
+  "/usr/local/etc/",
+  "/usr/local/share/",
+  "/opt/",
+  "/srv/",
+]
+
+[paths]
+# No operation (chmod / chown / install-file) may touch these paths or anything
+# below them. This is what keeps the agent from weakening its own boundary.
+protected_prefixes = [
+  "/etc/sudoers",
+  "/etc/sudoers.d",
+  "/etc/shadow",
+  "/etc/gshadow",
+  "/etc/passwd",
+  "/etc/group",
+  "/etc/pam.d",
+  "/etc/pam.conf",
+  "/etc/security",
+  "/etc/polkit-1",
+  "/usr/share/polkit-1",
+  "/etc/agent-privexec",
+  "/usr/local/bin/agent-privexec",
+  "/usr/local/libexec/agent-privexec-root",
+  "/etc/ssh",
+  "/root",
+  "/boot",
+]

@@ -1,0 +1,176 @@
+# agent-privexec execpolicy rules
+# Install as ~/.codex/rules/privileged.rules
+#
+# Enforced by the Codex execution layer, not by the model. Direct privilege
+# escalation is refused outright; the broker requires explicit approval.
+
+prefix_rule(
+    pattern=["sudo"],
+    decision="forbidden",
+    justification="Direct sudo is forbidden. Use agent-privexec instead.",
+)
+
+prefix_rule(
+    pattern=["/usr/bin/sudo"],
+    decision="forbidden",
+    justification="Direct sudo is forbidden. Use agent-privexec instead.",
+)
+
+prefix_rule(
+    pattern=["sudoedit"],
+    decision="forbidden",
+    justification="Direct sudoedit is forbidden. Use agent-privexec install-file instead.",
+)
+
+prefix_rule(
+    pattern=["pkexec"],
+    decision="forbidden",
+    justification="Direct pkexec is forbidden. Use agent-privexec instead.",
+)
+
+prefix_rule(
+    pattern=["/usr/bin/pkexec"],
+    decision="forbidden",
+    justification="Direct pkexec is forbidden. Use agent-privexec instead.",
+)
+
+prefix_rule(
+    pattern=["su"],
+    decision="forbidden",
+    justification="Switching users is forbidden. Use agent-privexec instead.",
+)
+
+prefix_rule(
+    pattern=["doas"],
+    decision="forbidden",
+    justification="Direct doas is forbidden. Use agent-privexec instead.",
+)
+
+prefix_rule(
+    pattern=["pkttyagent"],
+    decision="forbidden",
+    justification="TTY polkit agents are forbidden; authentication must happen in the desktop agent.",
+)
+
+prefix_rule(
+    pattern=["visudo"],
+    decision="forbidden",
+    justification="Editing sudoers is forbidden.",
+)
+
+# --------------------------------------------------------------------------
+# Inner interpreter wrappers.
+#
+# Codex already decomposes the shell it wraps every command in (`zsh -lc ...`),
+# so `sudo id` is matched by the rules above. An *explicit* inner interpreter is
+# not decomposed, which makes `bash -lc 'sudo id'` a bypass. These rules force
+# such invocations in front of the user instead of letting them run silently.
+# Ordinary pipelines and compound commands are unaffected - they are part of the
+# outer wrapper that Codex decomposes.
+# --------------------------------------------------------------------------
+
+prefix_rule(
+    pattern=["bash", "-c"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["bash", "-lc"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["sh", "-c"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["zsh", "-c"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["zsh", "-lc"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["dash", "-c"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["/bin/bash", "-c"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["/bin/sh", "-c"],
+    decision="prompt",
+    justification="Inline shell scripts bypass command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["python3", "-c"],
+    decision="prompt",
+    justification="Inline interpreter code bypasses command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["python", "-c"],
+    decision="prompt",
+    justification="Inline interpreter code bypasses command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["perl", "-e"],
+    decision="prompt",
+    justification="Inline interpreter code bypasses command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["ruby", "-e"],
+    decision="prompt",
+    justification="Inline interpreter code bypasses command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["node", "-e"],
+    decision="prompt",
+    justification="Inline interpreter code bypasses command rules; review before running.",
+)
+
+prefix_rule(
+    pattern=["env"],
+    decision="prompt",
+    justification="env can hide the real command; review before running.",
+)
+
+prefix_rule(
+    pattern=["xargs"],
+    decision="prompt",
+    justification="xargs can hide the real command; review before running.",
+)
+
+# --------------------------------------------------------------------------
+# The one sanctioned path.
+# --------------------------------------------------------------------------
+
+prefix_rule(
+    pattern=["agent-privexec"],
+    decision="prompt",
+    justification="Privileged operation requires explicit user approval.",
+)
+
+prefix_rule(
+    pattern=["/usr/local/bin/agent-privexec"],
+    decision="prompt",
+    justification="Privileged operation requires explicit user approval.",
+)

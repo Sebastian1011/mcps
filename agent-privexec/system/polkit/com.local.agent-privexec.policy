@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+  "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+
+<policyconfig>
+  <vendor>Local Workstation</vendor>
+
+  <action id="com.local.agent-privexec.execute">
+    <description>Execute an approved privileged development operation</description>
+    <description xml:lang="zh_CN">执行一次已批准的开发特权操作</description>
+    <message>Authentication is required for an AI coding agent privileged operation</message>
+    <message xml:lang="zh_CN">AI 编码助手请求执行特权操作，需要管理员认证</message>
+
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <!-- auth_admin, never auth_admin_keep: every request re-authenticates. -->
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/agent-privexec-root</annotate>
+  </action>
+</policyconfig>
