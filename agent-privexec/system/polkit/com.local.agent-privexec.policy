@@ -9,8 +9,8 @@
   <action id="com.local.agent-privexec.execute">
     <description>Execute an approved privileged development operation</description>
     <description xml:lang="zh_CN">执行一次已批准的开发特权操作</description>
-    <message>Authentication is required for an AI coding agent privileged operation</message>
-    <message xml:lang="zh_CN">AI 编码助手请求执行特权操作，需要管理员认证</message>
+    <message>Authentication is required to run this privileged command: $(command_line)</message>
+    <message xml:lang="zh_CN">执行以下特权命令需要管理员认证：$(command_line)</message>
 
     <defaults>
       <allow_any>no</allow_any>

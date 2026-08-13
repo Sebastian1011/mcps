@@ -6,8 +6,8 @@ description: Safely perform Linux operations that require administrative privile
 # Privileged execution
 
 Root operations on this machine go through one broker: `agent-privexec`. It asks
-the user for approval, then a desktop dialog authenticates the human. You never
-see or handle the password.
+the user for approval, then a desktop dialog shows the broker command and
+authenticates the human. You never see or handle the password.
 
 ## Rules
 

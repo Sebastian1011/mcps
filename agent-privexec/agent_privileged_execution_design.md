@@ -302,7 +302,7 @@ ruby -e
 
   <action id="com.local.agent-privexec.execute">
     <description>Execute an approved privileged development operation</description>
-    <message>Authentication is required for an AI coding agent privileged operation</message>
+    <message>Authentication is required to run this privileged command: $(command_line)</message>
 
     <defaults>
       <allow_any>no</allow_any>
@@ -317,7 +317,8 @@ ruby -e
 </policyconfig>
 ```
 
-`pkexec` 只对固定 root helper 使用该 action。
+`pkexec` 只对固定 root helper 使用该 action。`$(command_line)` 由 `pkexec`
+展开，使桌面认证弹窗同时显示本次请求的完整 broker 命令和结构化操作参数。
 
 ---
 

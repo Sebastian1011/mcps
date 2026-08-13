@@ -17,7 +17,7 @@ agent -> agent-privexec -> pkexec --disable-internal-agent -> polkitd
 Two independent confirmations, never merged:
 
 - **agent approval** - the user confirms *which command* runs (Codex execpolicy / Claude permissions);
-- **OS authentication** - the desktop polkit dialog confirms *who is asking* (`auth_admin`, no caching).
+- **OS authentication** - the desktop polkit dialog shows the requested broker command and confirms *who is asking* (`auth_admin`, no caching).
 
 The skill is guidance; the boundary is the root-owned helper plus polkit.
 
@@ -110,6 +110,7 @@ privileged.
 
 ```bash
 python3 tests/test_client.py # 5 client preflight tests, no GUI needed
+python3 tests/test_polkit_policy.py # authentication prompt includes the command
 ./tests/test_policy.sh        # 38 policy decisions, unprivileged dry-run, no GUI needed
 ./tests/test_hook.sh          # 33 Claude hook cases (deny bypasses / allow normal work)
 ./tests/test_codex_rules.sh   # 17 execpolicy decisions via `codex execpolicy check`
@@ -125,6 +126,7 @@ python3 tests/test_client.py # 5 client preflight tests, no GUI needed
 | `agent-privexec exec -- /bin/bash` denied by the root helper | automated |
 | protected paths, symbolic/setuid modes, bad units, oversized or control-character input | automated |
 | `agent-privexec exec -- /usr/bin/id` → approval + GUI authentication | manual, after `sudo ./install.sh` |
+| GUI authentication dialog includes the requested broker command | automated policy check; visual rendering is desktop-agent-specific |
 | Cancel in the GUI dialog → operation fails, no retry | manual |
 | No graphical polkit agent → fails, no TTY fallback | manual (e.g. over SSH: exits 4) |
 | Editing the skill or a project hook does not affect OS policy | by construction - policy is root-owned |
