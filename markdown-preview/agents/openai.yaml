@@ -1,0 +1,4 @@
+interface:
+  display_name: "Markdown Preview"
+  short_description: "Live browser preview for Markdown documents"
+  default_prompt: "Use $markdown-preview to open a live browser preview of this Markdown file."
