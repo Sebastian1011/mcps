@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delegate AI Worker"
+  short_description: "Offload large, low-risk context and vision tasks"
+  default_prompt: "Use $delegate-worker to scan this repository and return a compact evidence-backed map of the relevant files."
