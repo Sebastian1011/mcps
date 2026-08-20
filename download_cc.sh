@@ -1,7 +1,8 @@
 #!/bin/bash
 
 set -e
-
+# Configuration
+# Default download location and base URL
 DOWNLOAD_BASE_URL="https://downloads.claude.ai/claude-code-releases"
 DOWNLOAD_DIR="$(pwd)"
 
