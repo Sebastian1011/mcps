@@ -150,6 +150,9 @@ send_report() {
 
 finish() {
     local exit_code=$?
+    if [ -n "${codex_workdir:-}" ]; then
+        rm -rf "$codex_workdir"
+    fi
     if [ -n "${workdir:-}" ]; then
         rm -rf "$workdir"
     fi
@@ -177,7 +180,13 @@ target_home=$(getent passwd "$target_uid" | cut -d: -f6)
 # Run a command as the target desktop user (handles the sudo case)
 run_as_target() {
     if [ "$(id -u)" -eq 0 ] && [ "$target_uid" -ne 0 ]; then
-        runuser -u "$target_user" -- "$@"
+        # System services do not inherit the desktop user's session environment.
+        # Claude's native updater uses systemd-run --user after replacing the
+        # binary, so point it at the target user's user-manager bus.
+        runuser -u "$target_user" -- env \
+            "XDG_RUNTIME_DIR=/run/user/$target_uid" \
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$target_uid/bus" \
+            "$@"
     else
         "$@"
     fi
@@ -212,7 +221,7 @@ record_cli() {
 update_cli() {
     local command_name="$1"
     local npm_package="$2"
-    local command_path npm_path npm_prefix before
+    local command_path npm_path npm_prefix before after
 
     command_path=$(target_command_path "$command_name")
     if [ -z "$command_path" ]; then
@@ -226,8 +235,17 @@ update_cli() {
     if { [ "$command_name" = "claude" ] || [ "$command_name" = "codex" ]; } &&
        [ "$(dirname "$command_path")" = "$target_home/.local/bin" ]; then
         echo "⬆️  Updating $command_name with '$command_name update'"
-        run_as_target "$command_path" update
-        record_cli "$command_name" "$before" "$(cli_version "$command_path")"
+        if run_as_target "$command_path" update; then
+            record_cli "$command_name" "$before" "$(cli_version "$command_path")"
+        else
+            after=$(cli_version "$command_path")
+            if [ "$before" != "$after" ]; then
+                CLI_LINES+=("• $command_name — $before → $after (updater exited non-zero)")
+            else
+                CLI_LINES+=("• $command_name — update failed, skipped ($before)")
+            fi
+            echo "⚠️  $command_name update failed; continuing with the remaining updates" >&2
+        fi
         return
     fi
 
@@ -240,17 +258,136 @@ update_cli() {
        [ "$command_path" = "$npm_prefix/bin/$command_name" ] &&
        run_as_target "$npm_path" list --global --depth=0 "$npm_package" >/dev/null 2>&1; then
         echo "⬆️  Updating $command_name with npm"
-        run_as_target "$npm_path" update --global "$npm_package"
-        record_cli "$command_name" "$before" "$(cli_version "$command_path")"
+        if run_as_target "$npm_path" update --global "$npm_package"; then
+            record_cli "$command_name" "$before" "$(cli_version "$command_path")"
+        else
+            CLI_LINES+=("• $command_name — npm update failed, skipped ($before)")
+            echo "⚠️  $command_name npm update failed; continuing with the remaining updates" >&2
+        fi
     else
         echo "⚠️  Cannot determine how $command_name was installed; skipping" >&2
         CLI_LINES+=("• $command_name — install method unknown, skipped")
     fi
 }
 
+codex_binary_for_home() {
+    local codex_home="$1" current binary
+
+    current=$(readlink -f "$codex_home/packages/standalone/current" 2>/dev/null || true)
+    [ -f "$current/codex-package.json" ] || return 0
+
+    binary="$current/bin/codex"
+    if [ ! -x "$binary" ]; then
+        binary="$current/codex"
+    fi
+    [ -x "$binary" ] && printf '%s\n' "$binary"
+}
+
+update_all_codex_homes() {
+    local candidate codex_home binary before after active_codex installer_path
+    local failed=false
+    local -a codex_homes=()
+
+    # ~/.codex may be an alias for one of the named homes. Resolve and
+    # de-duplicate every standalone installation before updating it.
+    for candidate in "$target_home/.codex" "$target_home"/.codex-*; do
+        [ -d "$candidate/packages/standalone" ] || continue
+
+        codex_home=$(readlink -f "$candidate" 2>/dev/null || true)
+        [ -n "$codex_home" ] || continue
+
+        case " ${codex_homes[*]} " in
+            *" $codex_home "*) continue ;;
+        esac
+
+        binary=$(codex_binary_for_home "$codex_home")
+        [ -n "$binary" ] || continue
+
+        codex_homes+=("$codex_home")
+    done
+
+    if [ ${#codex_homes[@]} -eq 0 ]; then
+        update_cli codex @openai/codex
+        return
+    fi
+
+    codex_workdir=$(mktemp -d)
+    chmod 755 "$codex_workdir"
+    installer_path="$codex_workdir/install.sh"
+
+    if ! download_file "https://chatgpt.com/codex/install.sh" "$installer_path"; then
+        echo "⚠️  Failed to download the Codex standalone installer" >&2
+        CLI_LINES+=("• codex — installer download failed")
+        return 1
+    fi
+    chmod 644 "$installer_path"
+
+    if [ -L "$target_home/.local/bin/codex" ]; then
+        active_codex=$(readlink "$target_home/.local/bin/codex")
+    fi
+
+    for codex_home in "${codex_homes[@]}"; do
+        binary=$(codex_binary_for_home "$codex_home")
+        before=$(cli_version_with_home "$codex_home" "$binary")
+
+        echo "⬆️  Updating codex home $codex_home"
+        if run_as_target env \
+               "CODEX_HOME=$codex_home" \
+               CODEX_NON_INTERACTIVE=1 \
+               sh "$installer_path"; then
+            binary=$(codex_binary_for_home "$codex_home")
+            after=$(cli_version_with_home "$codex_home" "$binary")
+            if [ -n "$after" ]; then
+                record_codex_home "$codex_home" "$before" "$after"
+            else
+                failed=true
+                CLI_LINES+=("• codex ($(basename "$codex_home")) — update could not be verified")
+                echo "⚠️  Could not verify the Codex update for $codex_home" >&2
+            fi
+        else
+            failed=true
+            CLI_LINES+=("• codex ($(basename "$codex_home")) — update failed (${before:-unknown})")
+            echo "⚠️  Codex update failed for $codex_home; continuing" >&2
+        fi
+    done
+
+    # Each standalone install may rewrite the shared PATH alias. Preserve the
+    # profile that was active before this batch started.
+    if [ -n "$active_codex" ] &&
+       ! run_as_target ln -sfn "$active_codex" "$target_home/.local/bin/codex"; then
+        failed=true
+        CLI_LINES+=("• codex — failed to restore active profile")
+        echo "⚠️  Failed to restore $target_home/.local/bin/codex" >&2
+    fi
+
+    [ "$failed" = false ]
+}
+
+cli_version_with_home() {
+    local codex_home="$1" binary="$2"
+
+    [ -x "$binary" ] || return 0
+    run_as_target env "CODEX_HOME=$codex_home" "$binary" --version 2>/dev/null | head -n1 || true
+}
+
+record_codex_home() {
+    local codex_home="$1" before="$2" after="$3"
+    local label
+
+    label=$(basename "$codex_home")
+    if [ "$before" = "$after" ]; then
+        CLI_LINES+=("• codex ($label) — already up to date (${after:-unknown})")
+    else
+        CLI_LINES+=("• codex ($label) — ${before:-unknown} → ${after:-unknown}")
+    fi
+}
+
 echo "Updating AI CLIs..."
 update_cli claude @anthropic-ai/claude-code
-update_cli codex @openai/codex
+CODEX_UPDATE_FAILED=false
+if ! update_all_codex_homes; then
+    CODEX_UPDATE_FAILED=true
+fi
 update_cli gemini @google/gemini-cli
 echo ""
 
@@ -310,6 +447,9 @@ fi
 if [ "$FORCE" = false ] && [ "$installed_version" = "${tag#v}" ]; then
     echo "cc-switch $installed_version is already up to date."
     CC_LINES+=("• already up to date ($tag)")
+    if [ "$CODEX_UPDATE_FAILED" = true ]; then
+        die "One or more Codex homes failed to update."
+    fi
     exit 0
 fi
 
@@ -432,4 +572,8 @@ if [ -f "$autostart_desktop" ] && grep -q '^Exec=.*(deleted)' "$autostart_deskto
     echo "🛠️  Fixed stale autostart entry: $autostart_desktop"
     echo ""
     CC_LINES+=("• fixed stale autostart entry")
+fi
+
+if [ "$CODEX_UPDATE_FAILED" = true ]; then
+    die "One or more Codex homes failed to update."
 fi
