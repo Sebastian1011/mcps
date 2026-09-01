@@ -1,0 +1,19 @@
+{
+  "rule_resources": [
+    {
+      "id": "1D7F590C-B752-4BA0-9473-6A26DE1326B1",
+      "enabled": true,
+      "path": "rulesets/1D7F590C-B752-4BA0-9473-6A26DE1326B1"
+    },
+    {
+      "id": "8C13E995-8F06-4927-BEA7-6C845FB7EEBF",
+      "enabled": true,
+      "path": "rulesets/8C13E995-8F06-4927-BEA7-6C845FB7EEBF"
+    },
+    {
+      "id": "D72B6F06-52B2-4FED-96A2-1BF59CDD7AEC",
+      "enabled": true,
+      "path": "rulesets/D72B6F06-52B2-4FED-96A2-1BF59CDD7AEC"
+    }
+  ]
+}

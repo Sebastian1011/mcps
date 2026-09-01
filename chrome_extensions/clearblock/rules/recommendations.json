@@ -1,0 +1,47 @@
+[
+  {
+    "id": "8C13E995-8F06-4927-BEA7-6C845FB7EEBF",
+    "type": "ads",
+    "languages": [
+      "en"
+    ],
+    "title": "EasyList",
+    "homepage": "https://easylist.to/",
+    "url": "https://easylist-downloads.adblockplus.org/v3/full/easylist.txt",
+    "mv2_url": "https://easylist-downloads.adblockplus.org/easylist.txt",
+    "diff_url": "https://easylist-downloads.adblockplus.org/v3/diff/easylist/a5a46e9cfabb22e75fb8f8706a739ebd26b29e59.json",
+    "expires": "1 days (update frequency)",
+    "rule_count": 51627
+  },
+  {
+    "id": "D72B6F06-52B2-4FED-96A2-1BF59CDD7AEC",
+    "type": "privacy",
+    "title": "EasyPrivacy",
+    "homepage": "https://easylist.to/",
+    "requires": [
+      "8C13E995-8F06-4927-BEA7-6C845FB7EEBF"
+    ],
+    "url": "https://easylist-downloads.adblockplus.org/v3/full/easyprivacy.txt",
+    "mv2_url": "https://easylist-downloads.adblockplus.org/easyprivacy.txt",
+    "diff_url": "https://easylist-downloads.adblockplus.org/v3/diff/easyprivacy/a5a46e9cfabb22e75fb8f8706a739ebd26b29e59.json",
+    "expires": "1 days (update frequency)",
+    "rule_count": 53418
+  },
+  {
+    "id": "1D7F590C-B752-4BA0-9473-6A26DE1326B1",
+    "type": "ads",
+    "languages": [
+      "zh"
+    ],
+    "title": "EasyList China",
+    "homepage": "https://github.com/easylist/easylistchina/",
+    "requires": [
+      "8C13E995-8F06-4927-BEA7-6C845FB7EEBF"
+    ],
+    "url": "https://easylist-downloads.adblockplus.org/v3/full/easylistchina.txt",
+    "mv2_url": "https://easylist-downloads.adblockplus.org/easylistchina.txt",
+    "diff_url": "https://easylist-downloads.adblockplus.org/v3/diff/easylistchina/a5a46e9cfabb22e75fb8f8706a739ebd26b29e59.json",
+    "expires": "1 days (update frequency)",
+    "rule_count": 12120
+  }
+]

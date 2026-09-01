@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>ClearBlock</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand"><img src="icons/icon-32.png" alt=""><span>ClearBlock</span></div>
+        <button id="settings" class="icon-button" data-i18n-aria="settings" aria-label="Settings">⚙</button>
+      </header>
+      <section id="supported-content">
+        <p class="eyebrow" data-i18n="blockAdsOn">BLOCK ADS ON…</p>
+        <div class="toggle-row">
+          <div><strong data-i18n="thisWebsite">This website:</strong><span id="hostname"></span></div>
+          <label class="switch"><input id="site-toggle" type="checkbox"><span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div><strong data-i18n="thisPage">This page:</strong><span id="page-label"></span></div>
+          <label class="switch"><input id="page-toggle" type="checkbox"><span></span></label>
+        </div>
+        <p id="error" class="error" role="alert"></p>
+        <section class="stats">
+          <p class="eyebrow" data-i18n="itemsBlocked">NUMBER OF ITEMS BLOCKED</p>
+          <div class="stats-card">
+            <div><span data-i18n="onThisPage">on this page</span><strong id="page-count">0</strong></div>
+            <div><span data-i18n="inTotal">in total</span><strong id="total-count">0</strong></div>
+          </div>
+        </section>
+        <button id="block-element" class="primary"><span class="cursor-icon">▱</span><span data-i18n="blockElement">Block element</span></button>
+      </section>
+      <section id="unsupported" hidden>
+        <div class="unsupported-icon">⊘</div>
+        <strong data-i18n="unsupportedTitle">ClearBlock can’t run on this page</strong>
+        <p data-i18n="unsupportedBody">Chrome protects internal and extension pages from modification.</p>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

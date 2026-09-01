@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>ClearBlock</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><img src="icons/icon-48.png" alt=""><div><strong>ClearBlock</strong><span data-i18n="settings">Settings</span></div></div>
+    </header>
+    <main>
+      <section class="intro">
+        <h1 data-i18n="allowlistTitle">Allowlist</h1>
+        <p data-i18n="allowlistDescription">ClearBlock won’t block ads on websites and pages listed here.</p>
+      </section>
+
+      <section class="card">
+        <form id="add-form" class="add-form">
+          <label><span data-i18n="ruleType">Rule type</span>
+            <select id="scope"><option value="site" data-i18n="website">Website</option><option value="page" data-i18n="page">Page</option></select>
+          </label>
+          <label class="grow"><span data-i18n="websiteOrUrl">Hostname or URL</span>
+            <input id="value" required autocomplete="off" data-i18n-placeholder="allowlistPlaceholder" placeholder="example.com">
+          </label>
+          <button class="primary" type="submit" data-i18n="add">Add</button>
+        </form>
+        <div class="toolbar">
+          <input id="search" type="search" data-i18n-placeholder="searchAllowlist" placeholder="Search allowlist">
+          <button id="clear-all" class="danger-text" type="button" data-i18n="clearAllowlist">Clear allowlist</button>
+        </div>
+        <div id="allowlist" class="list"></div>
+        <p id="allowlist-empty" class="empty" data-i18n="allowlistEmpty">No websites or pages are allowlisted.</p>
+      </section>
+
+      <section class="intro compact">
+        <h2 data-i18n="elementRulesTitle">Blocked elements</h2>
+        <p data-i18n="elementRulesDescription">Elements you manually selected from the ClearBlock popup.</p>
+      </section>
+      <section class="card">
+        <div id="elements" class="list"></div>
+        <p id="elements-empty" class="empty" data-i18n="elementRulesEmpty">No elements have been manually blocked.</p>
+      </section>
+
+      <section class="intro compact">
+        <h2 data-i18n="filterListsTitle">Filter lists</h2>
+        <p data-i18n="filterListsDescription">Lists update automatically. The packaged rules remain active if an update fails.</p>
+      </section>
+      <section class="card">
+        <div class="toolbar right"><button id="update-now" class="secondary" type="button" data-i18n="updateNow">Update now</button></div>
+        <div id="subscriptions" class="list"></div>
+      </section>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </main>
+    <template id="row-template">
+      <div class="row"><div class="row-main"><strong></strong><span></span></div><button class="remove" type="button"></button></div>
+    </template>
+    <script src="options.js"></script>
+  </body>
+</html>

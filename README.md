@@ -1,12 +1,12 @@
-# mcps
+# ai-tools
 
 自用的 MCP servers 与 Claude Code / Codex skills 集合。
 
 ## 获取仓库
 
 ```bash
-git clone https://github.com/Sebastian1011/mcps.git
-cd mcps
+git clone https://github.com/Sebastian1011/ai-tools.git
+cd ai-tools
 ```
 
 下文命令均在仓库根目录执行。Skill 通过软链接安装，因此移动或删除仓库后链接会失效；安装完成后请重启 Claude Code / Codex 会话。

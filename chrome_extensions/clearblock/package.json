@@ -1,0 +1,40 @@
+{
+  "name": "clearblock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A privacy-first Manifest V3 ad blocker for Chrome.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=24",
+    "npm": ">=11"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "rules:update": "node scripts/update-rules.mjs",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "package": "node scripts/package.mjs"
+  },
+  "dependencies": {
+    "@eyeo/webext-ad-filtering-solution": "4.1.0",
+    "webextension-polyfill": "0.12.0"
+  },
+  "overrides": {
+    "serialize-javascript": "7.1.1",
+    "tar": "7.5.22",
+    "uuid": "11.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/chrome": "0.1.1",
+    "@types/node": "24.10.1",
+    "archiver": "7.0.1",
+    "esbuild": "0.25.12",
+    "jsdom": "27.2.0",
+    "sharp": "0.35.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

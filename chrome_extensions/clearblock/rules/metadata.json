@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-09-01T04:04:36.124Z",
+  "source": "https://easylist-downloads.adblockplus.org/v3/index.json",
+  "files": [
+    {
+      "id": "8C13E995-8F06-4927-BEA7-6C845FB7EEBF",
+      "subscriptionSha256": "24329421e4809d36610effc0a5690715dc114228fd77219051d1b9525df7dce0",
+      "rulesetSha256": "75883bd7cadc6ea20eca48e16eb957bf7a8f5df05c724475313603e8e1290869"
+    },
+    {
+      "id": "D72B6F06-52B2-4FED-96A2-1BF59CDD7AEC",
+      "subscriptionSha256": "d0ba404ebb20e59b4a0dd36978fd86b0f4f923c00ef3e8830cd5e9af911378a8",
+      "rulesetSha256": "324840cec841e98ce14a9c56c4ed825906dc3b3795d06e07a27c11d30477768f"
+    },
+    {
+      "id": "1D7F590C-B752-4BA0-9473-6A26DE1326B1",
+      "subscriptionSha256": "f1a9c9fbeca19bedb649f21909b0950714cb4ec5398b82dd718a50f7626cdabe",
+      "rulesetSha256": "c81993d4b9c3d2d991c11ed0a8ee8258c8f04bfb18c3d729223b5f523266811c"
+    }
+  ]
+}
