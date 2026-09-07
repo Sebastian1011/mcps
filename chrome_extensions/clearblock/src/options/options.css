@@ -41,5 +41,13 @@ button:disabled { opacity: .55; cursor: wait; }
 .status { position: fixed; right: 24px; bottom: 20px; max-width: 420px; margin: 0; border-radius: 7px; background: #e8f6ec; color: #246b35; padding: 10px 14px; box-shadow: 0 3px 14px rgba(0,0,0,.12); }
 .status:empty { display: none; }
 .failure { color: #b3261e !important; }
+.sync-row { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 20px; cursor: pointer; }
+.sync-copy { min-width: 0; }
+.sync-copy strong, .sync-copy > span { display: block; }
+.sync-copy strong { color: #25282d; font-size: 15px; }
+.sync-copy > span { margin: 5px 0 0; color: #70757d; font-size: 12px; font-weight: 400; }
+#user-sync { width: 42px; height: 22px; flex: 0 0 auto; accent-color: #0799db; cursor: pointer; }
+#user-sync:disabled { cursor: wait; }
+.inline-error { margin: 0; border-top: 1px solid #f1d1ce; background: #fff7f6; color: #b3261e; padding: 12px 20px; font-size: 13px; }
 [hidden] { display: none !important; }
 @media (max-width: 650px) { .add-form { align-items: stretch; flex-direction: column; } .add-form button { width: 100%; } .toolbar { align-items: stretch; flex-direction: column; } .toolbar input { max-width: none; } }

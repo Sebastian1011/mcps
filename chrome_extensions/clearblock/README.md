@@ -2,7 +2,8 @@
 
 ClearBlock is a Manifest V3 Chrome extension that blocks ads and trackers,
 hides cosmetic page elements, supports site and exact-page allowlisting, and
-lets users select page elements to hide.
+lets users select page elements to hide. Users can optionally synchronize
+those allowlist and element rules through their signed-in Chrome profile.
 
 ## Requirements
 
@@ -42,6 +43,17 @@ npm run rules:update
 This command downloads filter data from the official EasyList distribution
 endpoint, regenerates DNR rules, and records SHA-256 hashes in
 `rules/metadata.json`.
+
+## User-rule sync
+
+Open ClearBlock settings and enable **Sync user rules** to synchronize website
+allowlist entries, exact-page exceptions, and manually blocked elements through
+Chrome Sync. Enabling it for the first time merges the rules already stored on
+the device with the rules in the Chrome profile.
+
+Filter lists, blocking counts, update state, and per-tab data remain local.
+Turning sync off preserves both the current device's rules and the last cloud
+copy.
 
 ## Privacy and licensing
 

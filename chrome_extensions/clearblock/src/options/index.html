@@ -35,6 +35,21 @@
       </section>
 
       <section class="intro compact">
+        <h2 data-i18n="syncTitle">Sync</h2>
+        <p data-i18n="syncDescription">Optionally sync your allowlist and manually blocked elements through your Chrome account.</p>
+      </section>
+      <section class="card">
+        <label class="sync-row" for="user-sync">
+          <span class="sync-copy">
+            <strong data-i18n="syncUserRules">Sync user rules</strong>
+            <span data-i18n="syncUserRulesDetail">Filter lists and blocking statistics stay on this device.</span>
+          </span>
+          <input id="user-sync" type="checkbox" role="switch">
+        </label>
+        <p id="sync-error" class="inline-error" hidden></p>
+      </section>
+
+      <section class="intro compact">
         <h2 data-i18n="elementRulesTitle">Blocked elements</h2>
         <p data-i18n="elementRulesDescription">Elements you manually selected from the ClearBlock popup.</p>
       </section>

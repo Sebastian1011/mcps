@@ -1,5 +1,6 @@
 import {localize, send} from "../ui";
 import type {AllowlistEntry, ElementRule, OptionsState, SubscriptionStatus} from "../shared/types";
+import {dateFromEpochSeconds} from "../shared/time";
 
 localize();
 
@@ -13,13 +14,20 @@ const search = document.querySelector<HTMLInputElement>("#search")!;
 const scope = document.querySelector<HTMLSelectElement>("#scope")!;
 const value = document.querySelector<HTMLInputElement>("#value")!;
 const updateButton = document.querySelector<HTMLButtonElement>("#update-now")!;
-let state: OptionsState = {allowlist: [], elementRules: [], subscriptions: []};
+const userSync = document.querySelector<HTMLInputElement>("#user-sync")!;
+const syncError = document.querySelector<HTMLElement>("#sync-error")!;
+let state: OptionsState = {
+  allowlist: [],
+  elementRules: [],
+  subscriptions: [],
+  userSync: {enabled: false, error: null}
+};
 
 function formatDate(timestamp: number | null): string {
   if (!timestamp) return chrome.i18n.getMessage("neverUpdated");
   return new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), {
     dateStyle: "medium", timeStyle: "short"
-  }).format(new Date(timestamp));
+  }).format(dateFromEpochSeconds(timestamp));
 }
 
 function removeButton(filterText: string): HTMLButtonElement {
@@ -97,6 +105,11 @@ function render(): void {
   elementsNode.replaceChildren(...state.elementRules.map(elementRow));
   elementsEmpty.hidden = state.elementRules.length > 0;
   subscriptionsNode.replaceChildren(...state.subscriptions.map(subscriptionRow));
+  userSync.checked = state.userSync.enabled;
+  syncError.hidden = !state.userSync.error;
+  syncError.textContent = state.userSync.error
+    ? chrome.i18n.getMessage("syncError", [state.userSync.error])
+    : "";
 }
 
 async function load(): Promise<void> {
@@ -139,6 +152,13 @@ updateButton.addEventListener("click", () => {
       updateButton.disabled = false;
       setTimeout(() => void load(), 2000);
     });
+});
+userSync.addEventListener("change", () => {
+  userSync.disabled = true;
+  void perform(
+    () => send({type: "setUserSyncEnabled", enabled: userSync.checked}),
+    userSync.checked ? "syncEnabled" : "syncDisabled"
+  ).finally(() => userSync.disabled = false);
 });
 
 void load().catch(caught => {

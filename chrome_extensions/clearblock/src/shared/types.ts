@@ -49,6 +49,10 @@ export interface OptionsState {
   allowlist: AllowlistEntry[];
   elementRules: ElementRule[];
   subscriptions: SubscriptionStatus[];
+  userSync: {
+    enabled: boolean;
+    error: string | null;
+  };
 }
 
 export type RuntimeRequest =
@@ -61,6 +65,7 @@ export type RuntimeRequest =
   | {type: "addAllowlist"; scope: AllowlistScope; value: string}
   | {type: "removeFilter"; filterText: string}
   | {type: "clearAllowlist"}
+  | {type: "setUserSyncEnabled"; enabled: boolean}
   | {type: "syncSubscriptions"};
 
 export interface RuntimeResponse<T = unknown> {

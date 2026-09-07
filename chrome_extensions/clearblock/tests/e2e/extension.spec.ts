@@ -99,6 +99,69 @@ test("blocks a matching EasyList request and honors a site allowlist", async () 
   await options.evaluate(text => chrome.runtime.sendMessage({type: "removeFilter", filterText: text}), pageFilter);
 });
 
+test("publishes and applies synchronized user rules", async () => {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+
+  const initial = await options.evaluate(() => chrome.runtime.sendMessage({type: "getOptionsState"}));
+  expect(initial.data.userSync).toEqual({enabled: false, error: null});
+
+  await expect(options.locator("#user-sync")).not.toBeChecked();
+  await options.locator("#user-sync").check();
+  await expect.poll(async () => {
+    const response = await options.evaluate(() => chrome.runtime.sendMessage({type: "getOptionsState"}));
+    return response.data.userSync.enabled;
+  }).toBe(true);
+  const added = await options.evaluate(() => chrome.runtime.sendMessage({
+    type: "addAllowlist", scope: "site", value: "sync-local.test"
+  }));
+  expect(added.ok).toBe(true);
+
+  await expect.poll(() => options.evaluate(async () => {
+    const stored = await chrome.storage.sync.get(null);
+    const manifest = stored.clearBlockUserRulesManifest as {chunkCount?: number} | undefined;
+    return manifest?.chunkCount
+      && Array.from({length: manifest.chunkCount}, (_, index) => stored[`clearBlockUserRulesChunk:${index}`])
+        .every(chunk => typeof chunk === "string");
+  })).toBe(true);
+
+  await options.evaluate(async () => {
+    const updatedAt = Date.now() + 1_000;
+    const payload = {
+      version: 1,
+      updatedAt,
+      rules: [{
+        filterText: "@@||sync-remote.test^$document",
+        metadata: {
+          kind: "allowlist",
+          scope: "site",
+          value: "sync-remote.test",
+          hostname: "sync-remote.test",
+          createdAt: updatedAt
+        }
+      }]
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    await chrome.storage.sync.set({
+      clearBlockUserRulesManifest: {version: 1, chunkCount: 1, updatedAt},
+      "clearBlockUserRulesChunk:0": btoa(binary)
+    });
+  });
+
+  await expect.poll(async () => {
+    const response = await options.evaluate(() => chrome.runtime.sendMessage({type: "getOptionsState"}));
+    return response.data.allowlist.map((entry: {value: string}) => entry.value);
+  }).toEqual(["sync-remote.test"]);
+
+  const visibleState = await options.evaluate(() => chrome.runtime.sendMessage({type: "getOptionsState"}));
+  expect(visibleState.data.userSync).toEqual({enabled: true, error: null});
+  await options.evaluate(() => chrome.runtime.sendMessage({type: "setUserSyncEnabled", enabled: false}));
+  await options.evaluate(() => chrome.runtime.sendMessage({type: "clearAllowlist"}));
+  await options.evaluate(() => chrome.storage.sync.clear());
+});
+
 test("loads the popup and options pages from the installed extension", async () => {
   const page = await context.newPage();
   const errors: string[] = [];
@@ -124,7 +187,9 @@ test("loads the popup and options pages from the installed extension", async () 
 
   await page.goto(`chrome-extension://${extensionId}/options.html`);
   await expect(page.locator("h1")).toHaveText("Allowlist");
+  await expect(page.locator("#user-sync")).not.toBeChecked();
   await expect(page.locator("#subscriptions .row")).toHaveCount(3, {timeout: 30_000});
+  await expect(page.locator("#subscriptions")).not.toContainText("1970");
   if (process.env.CLEARBLOCK_SCREENSHOTS) {
     await page.setViewportSize({width: 1180, height: 900});
     await page.screenshot({path: "/tmp/clearblock-options.png", fullPage: true});
