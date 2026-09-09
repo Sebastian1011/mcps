@@ -10,9 +10,14 @@ developer. It contains no analytics, telemetry, advertising, ClearBlock
 account, crash-report upload, or remote-configuration service.
 
 The extension connects to `easylist-downloads.adblockplus.org` to download
-updates for EasyList, EasyPrivacy, and EasyList China. Those downloads contain
+updates for EasyList, EasyPrivacy, EasyList China, and ABP anti-circumvention
+filters. Those downloads contain
 filter-list data only; ClearBlock does not download or execute remote code. If
 an update fails, the last valid packaged or downloaded rules remain active.
+Anti-circumvention rules can select and configure snippet functions already
+bundled with the eyeo engine to filter page data, including YouTube player ads.
+For early filtering, eyeo caches applicable snippet configuration in per-tab
+website session storage.
 
 Allowlist entries and manually hidden element selectors are stored in Chrome
 extension storage on the user's device. Chrome account synchronization is off
@@ -32,4 +37,4 @@ advertising elements on the pages the user visits. The `webRequest` permission
 is used to observe request metadata for filtering reports and local counts; it
 does not expose response bodies to ClearBlock.
 
-Last updated: 2026-09-01.
+Last updated: 2026-09-08.

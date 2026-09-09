@@ -32,7 +32,8 @@ The ZIP is written to `artifacts/`.
 
 ## Filter list updates
 
-The extension ships with EasyList, EasyPrivacy, and EasyList China. The eyeo
+The extension ships with EasyList, EasyPrivacy, EasyList China, and the official
+ABP anti-circumvention filters (including YouTube player-data filters). The eyeo
 engine applies upstream differential updates at runtime. To refresh the
 packaged baseline rules before a release, run:
 
@@ -43,6 +44,22 @@ npm run rules:update
 This command downloads filter data from the official EasyList distribution
 endpoint, regenerates DNR rules, and records SHA-256 hashes in
 `rules/metadata.json`.
+
+## YouTube video ads
+
+The ABP anti-circumvention subscription supplies player-data filters through
+the bundled eyeo snippet engine. These suppress known advertisement fields
+before the player uses them, rather than relying on ClearBlock clicking Skip.
+The upstream list also includes fallback rules for some player variants.
+Website and exact-page allowlisting use the same engine as other filtering.
+The engine's early snippet cache is enabled. Initializing or updating that
+cache can reload a page; before the first cache initialization completes,
+very early player initialization can still race the filtering response.
+
+After updating an unpacked installation, reload ClearBlock in
+`chrome://extensions`, then reload the YouTube tab. YouTube changes may require
+filter updates; fixture verification does not guarantee every live ad variant
+is blocked.
 
 ## User-rule sync
 

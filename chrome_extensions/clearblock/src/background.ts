@@ -103,6 +103,7 @@ function recordBlockedItem(item: Eyeo.BlockableItem): void {
 const engineReady = EWE.start({
   name: "ClearBlock",
   version: chrome.runtime.getManifest().version,
+  lightningSnippets: true,
   bundledSubscriptions: recommendations,
   bundledSubscriptionsPath: "subscriptions"
 }).then(async () => {
@@ -422,6 +423,8 @@ async function handleRequest(request: RuntimeRequest): Promise<unknown> {
 }
 
 chrome.runtime.onMessage.addListener((request: RuntimeRequest, _sender, sendResponse) => {
+  // eyeo owns this namespace and must supply its own content-filter responses.
+  if (request?.type?.startsWith("ewe:")) return false;
   void handleRequest(request)
     .then(data => sendResponse({ok: true, data} satisfies RuntimeResponse))
     .catch(error => sendResponse({

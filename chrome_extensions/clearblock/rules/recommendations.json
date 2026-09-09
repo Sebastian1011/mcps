@@ -43,5 +43,16 @@
     "diff_url": "https://easylist-downloads.adblockplus.org/v3/diff/easylistchina/a5a46e9cfabb22e75fb8f8706a739ebd26b29e59.json",
     "expires": "1 days (update frequency)",
     "rule_count": 12120
+  },
+  {
+    "id": "D4028CDD-3D39-4624-ACC7-8140F4EC3238",
+    "type": "circumvention",
+    "title": "ABP filters",
+    "homepage": "https://gitlab.com/eyeo/anti-cv/abp-filters-anti-cv",
+    "url": "https://easylist-downloads.adblockplus.org/v3/full/abp-filters-anti-cv.txt",
+    "mv2_url": "https://easylist-downloads.adblockplus.org/abp-filters-anti-cv.txt",
+    "diff_url": "https://easylist-downloads.adblockplus.org/v3/diff/abp-filters-anti-cv/985b4a86322e763a9e48ffeddd140776b5747d5c.json",
+    "expires": "1 hours (update frequency)",
+    "rule_count": 1861
   }
 ]

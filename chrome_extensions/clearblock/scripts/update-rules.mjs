@@ -14,7 +14,8 @@ const indexUrl = "https://easylist-downloads.adblockplus.org/v3/index.json";
 const selectedIds = new Set([
   "8C13E995-8F06-4927-BEA7-6C845FB7EEBF", // EasyList
   "D72B6F06-52B2-4FED-96A2-1BF59CDD7AEC", // EasyPrivacy
-  "1D7F590C-B752-4BA0-9473-6A26DE1326B1"  // EasyList China
+  "1D7F590C-B752-4BA0-9473-6A26DE1326B1", // EasyList China
+  "D4028CDD-3D39-4624-ACC7-8140F4EC3238"  // ABP anti-circumvention (player snippets)
 ]);
 
 async function run(binary, args) {

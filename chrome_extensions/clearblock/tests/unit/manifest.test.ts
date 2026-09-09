@@ -11,7 +11,7 @@ describe("built extension", () => {
     expect(manifest.background).toEqual({service_worker: "background.js"});
     expect(manifest.permissions).not.toContain("declarativeNetRequestFeedback");
     expect(manifest.host_permissions).toEqual(["http://*/*", "https://*/*"]);
-    expect(manifest.declarative_net_request.rule_resources).toHaveLength(3);
+    expect(manifest.declarative_net_request.rule_resources).toHaveLength(4);
     expect(manifest.declarative_net_request.rule_resources.every((rule: {enabled: boolean}) => rule.enabled))
       .toBe(true);
   });

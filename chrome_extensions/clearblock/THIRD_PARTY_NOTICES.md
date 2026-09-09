@@ -6,6 +6,8 @@ ClearBlock includes the following third-party components and data:
 - EasyList — GPL-3.0-or-later and CC BY-SA 3.0.
 - EasyPrivacy — GPL-3.0-or-later and CC BY-SA 3.0.
 - EasyList China — GPL-3.0-or-later and CC BY-SA 3.0.
+- ABP anti-circumvention filters — GPL-3.0; maintained at
+  https://gitlab.com/eyeo/anti-cv/abp-filters-anti-cv.
 - webextension-polyfill — MPL-2.0.
 
 Build-only dependencies and their license metadata are recorded in

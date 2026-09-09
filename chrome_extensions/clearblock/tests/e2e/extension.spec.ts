@@ -188,11 +188,102 @@ test("loads the popup and options pages from the installed extension", async () 
   await page.goto(`chrome-extension://${extensionId}/options.html`);
   await expect(page.locator("h1")).toHaveText("Allowlist");
   await expect(page.locator("#user-sync")).not.toBeChecked();
-  await expect(page.locator("#subscriptions .row")).toHaveCount(3, {timeout: 30_000});
+  await expect(page.locator("#subscriptions .row")).toHaveCount(4, {timeout: 30_000});
   await expect(page.locator("#subscriptions")).not.toContainText("1970");
   if (process.env.CLEARBLOCK_SCREENSHOTS) {
     await page.setViewportSize({width: 1180, height: 900});
     await page.screenshot({path: "/tmp/clearblock-options.png", fullPage: true});
   }
   expect(errors).toEqual([]);
+});
+
+test("YouTube filters preroll data before playback without a Skip button", async () => {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  await options.evaluate(() => chrome.runtime.sendMessage({type: "getOptionsState"}));
+  const page = await context.newPage();
+  const requests: string[] = [];
+  const pageErrors: string[] = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  await page.route("https://www.youtube.com/**", route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/fixture-")) {
+      requests.push(url.pathname);
+      return route.fulfill({body: "ok"});
+    }
+    return route.fulfill({contentType: "text/html", body: `<!doctype html>
+      <title>YouTube player-data fixture</title>
+      <script>
+        function setPlayerResponse() {
+          const response = () => ({
+            adSlots: [{adSlotRenderer: {}}], adPlacements: [{adPlacementRenderer: {}}],
+            playerAds: [{playerLegacyDesktopWatchAdsRenderer: {}}],
+            videoDetails: {videoId: 'content-video'}, streamingData: {formats: [{url: '/fixture-content'}]}
+          });
+          window.ytInitialPlayerResponse = response();
+          window.ytplayer = {config: {args: {raw_player_response: response()}}};
+        }
+        setPlayerResponse();
+        window.initialAdFields = [ytInitialPlayerResponse.adSlots,
+          ytInitialPlayerResponse.adPlacements, ytInitialPlayerResponse.playerAds,
+          ytplayer.config.args.raw_player_response.adSlots,
+          ytplayer.config.args.raw_player_response.adPlacements,
+          ytplayer.config.args.raw_player_response.playerAds].map(value => value !== undefined);
+        function playContent() {
+          const data = window.ytInitialPlayerResponse;
+          window.adFields = [data.adSlots, data.adPlacements, data.playerAds,
+            ytplayer.config.args.raw_player_response.adSlots,
+            ytplayer.config.args.raw_player_response.adPlacements,
+            ytplayer.config.args.raw_player_response.playerAds].map(value => value !== undefined);
+          window.selectedMedia = window.adFields.some(Boolean) ? '/fixture-commercial' : data.streamingData.formats[0].url;
+          fetch(window.selectedMedia);
+        }
+        if (new URLSearchParams(location.search).has('autoplay')) playContent();
+      </script>
+      <button id="play" onclick="playContent()">Play content</button>`});
+  });
+  const url = "https://www.youtube.com/watch?v=clearblock-preroll";
+  // Cold initialization and allowlist changes refresh eyeo's cache and reload
+  // the document. Assert filtering at the first inline script of that document.
+  const initialized = (allowed: boolean) => page.waitForFunction(allowed => {
+    const fields = (window as typeof window & {initialAdFields?: boolean[]}).initialAdFields;
+    return fields?.length === 6 && fields.every(value => value === allowed);
+  }, allowed, {timeout: 5000});
+  const play = async (expected: string) => {
+    await page.locator("#play").click();
+    expect(await page.evaluate(() => (window as typeof window & {selectedMedia: string}).selectedMedia)).toBe(expected);
+    await expect.poll(() => requests.at(-1)).toBe(expected);
+  };
+  await page.goto(url);
+  await initialized(false);
+  await play("/fixture-content");
+  expect(requests).not.toContain("/fixture-commercial");
+  const beforeAutoplay = requests.length;
+  await page.goto(`${url}&autoplay=1`);
+  await expect.poll(() => requests.length).toBeGreaterThan(beforeAutoplay);
+  expect(requests).not.toContain("/fixture-commercial");
+  await page.evaluate(() => {
+    history.pushState({}, "", "/watch?v=clearblock-next");
+    (window as typeof window & {setPlayerResponse: () => void}).setPlayerResponse();
+  });
+  await play("/fixture-content");
+
+  for (const scope of ["site", "page"] as const) {
+    const added = await options.evaluate(({scope, url}) => chrome.runtime.sendMessage({
+      type: "addAllowlist", scope, value: scope === "site" ? "youtube.com" : url
+    }), {scope, url});
+    expect(added.ok).toBe(true);
+    await page.goto(url);
+    await initialized(true);
+    await play("/fixture-commercial");
+    const state = await options.evaluate(() => chrome.runtime.sendMessage({type: "getOptionsState"}));
+    const filterText = state.data.allowlist.find((entry: {scope: string}) => entry.scope === scope).filterText;
+    await options.evaluate(filterText => chrome.runtime.sendMessage({type: "removeFilter", filterText}), filterText);
+    await page.reload();
+    await initialized(false);
+    await play("/fixture-content");
+  }
+  expect(pageErrors).toEqual([]);
+  await page.close();
+  await options.close();
 });
